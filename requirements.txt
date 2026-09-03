@@ -1,0 +1,7 @@
+pip~=24.0
+attrs~=24.2.0
+protobuf~=4.25.4
+cryptography~=43.0.1
+pyTelegramBotAPI~=4.36.0
+python-dotenv~=1.0.1
+supabase
