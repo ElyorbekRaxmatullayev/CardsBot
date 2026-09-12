@@ -46,32 +46,38 @@ class QueryBuilder:
         return self
 
     def eq(self, col, val):
-        self._where.append(f"{self.table}.{col} = ?")
+        prefix = "" if "." in col else f"{self.table}."
+        self._where.append(f"{prefix}{col} = ?")
         self._params.append(val)
         return self
 
     def neq(self, col, val):
-        self._where.append(f"{self.table}.{col} != ?")
+        prefix = "" if "." in col else f"{self.table}."
+        self._where.append(f"{prefix}{col} != ?")
         self._params.append(val)
         return self
 
     def gt(self, col, val):
-        self._where.append(f"{self.table}.{col} > ?")
+        prefix = "" if "." in col else f"{self.table}."
+        self._where.append(f"{prefix}{col} > ?")
         self._params.append(val)
         return self
 
     def gte(self, col, val):
-        self._where.append(f"{self.table}.{col} >= ?")
+        prefix = "" if "." in col else f"{self.table}."
+        self._where.append(f"{prefix}{col} >= ?")
         self._params.append(val)
         return self
 
     def lte(self, col, val):
-        self._where.append(f"{self.table}.{col} <= ?")
+        prefix = "" if "." in col else f"{self.table}."
+        self._where.append(f"{prefix}{col} <= ?")
         self._params.append(val)
         return self
 
     def ilike(self, col, val):
-        self._where.append(f"{self.table}.{col} LIKE ?")
+        prefix = "" if "." in col else f"{self.table}."
+        self._where.append(f"{prefix}{col} LIKE ?")
         self._params.append(val.replace("*", "%"))
         return self
 
@@ -79,8 +85,9 @@ class QueryBuilder:
         if not vals:
             self._where.append("1=0")
             return self
+        prefix = "" if "." in col else f"{self.table}."
         placeholders = ",".join(["?"] * len(vals))
-        self._where.append(f"{self.table}.{col} IN ({placeholders})")
+        self._where.append(f"{prefix}{col} IN ({placeholders})")
         self._params.extend(vals)
         return self
 
@@ -114,6 +121,20 @@ class QueryBuilder:
         finally:
             self.conn.commit()
 
+    def or_(self, val):
+        # e.g., "user1_id.eq.123,user2_id.eq.123"
+        conditions = val.split(',')
+        or_clauses = []
+        for cond in conditions:
+            parts = cond.split('.')
+            if len(parts) == 3 and parts[1] == 'eq':
+                col, op, value = parts
+                or_clauses.append(f"{self.table}.{col} = ?")
+                self._params.append(value)
+        if or_clauses:
+            self._where.append("(" + " OR ".join(or_clauses) + ")")
+        return self
+
     def _execute_select(self, cur):
         # HARDCODED JOINS for specific Supabase queries
         join_clause = ""
@@ -121,27 +142,27 @@ class QueryBuilder:
 
         if self.table == "user_cards" and "cards(*)" in self._select:
             join_clause = "JOIN cards ON user_cards.card_id = cards.id"
-            select_cols = "user_cards.count, user_cards.card_level, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_desc, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image"
+            select_cols = "user_cards.count, user_cards.card_level, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_description, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at"
         
         elif self.table == "user_squads" and "cards(*)" in self._select:
             join_clause = "JOIN cards ON user_squads.card_id = cards.id"
-            select_cols = "user_squads.card_id, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_desc, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image"
+            select_cols = "user_squads.card_id, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_description, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at"
         
         elif self.table == "clan_members" and "users(" in self._select:
             join_clause = "JOIN users ON clan_members.user_id = users.telegram_id"
-            select_cols = "clan_members.role, users.first_name as u_fname, users.telegram_id as u_id"
+            select_cols = "clan_members.role, users.first_name as u_first_name, users.telegram_id as u_telegram_id"
         
         elif self.table == "market_listings" and "cards(*)" in self._select and "users!seller_id(first_name)" in self._select:
             join_clause = "JOIN cards ON market_listings.card_id = cards.id JOIN users ON market_listings.seller_id = users.telegram_id"
-            select_cols = "market_listings.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, users.first_name as u_fname"
+            select_cols = "market_listings.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at, users.first_name as u_first_name"
 
         elif self.table == "trade_offers" and "cards!offered_card_id(*)" in self._select and "users!from_user_id(first_name)" in self._select:
             join_clause = "LEFT JOIN cards ON trade_offers.offered_card_id = cards.id JOIN users ON trade_offers.from_user_id = users.telegram_id"
-            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, users.first_name as u_fname"
+            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at, users.first_name as u_first_name"
             
         elif self.table == "trade_offers" and "cards!offered_card_id(*)" in self._select and "users!to_user_id(first_name)" in self._select:
             join_clause = "LEFT JOIN cards ON trade_offers.offered_card_id = cards.id JOIN users ON trade_offers.to_user_id = users.telegram_id"
-            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, users.first_name as u_fname"
+            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at, users.first_name as u_first_name"
             
         elif self.table == "users" and self._select == "first_name, battles_won, battles_total":
              select_cols = "first_name, battles_won, battles_total"
@@ -149,10 +170,13 @@ class QueryBuilder:
         elif self.table == "cards" and self._select == "rarity":
             select_cols = "cards.rarity"
             
+        elif self.table == "marriages":
+            join_clause = "LEFT JOIN users as u1 ON marriages.user1_id = u1.telegram_id LEFT JOIN users as u2 ON marriages.user2_id = u2.telegram_id"
+            select_cols = "marriages.*, u1.first_name as u1_first_name, u1.username as u1_username, u2.first_name as u2_first_name, u2.username as u2_username"
+            
         elif self._select != "*":
             # For simple comma separated columns
             cols = [c.strip() for c in self._select.split(",")]
-            # ignore count="exact" syntax mixed in select like select("*, count=exact") - wait, that's passed as arg
             valid_cols = [c for c in cols if "(" not in c and "count=" not in c]
             if valid_cols:
                 select_cols = ", ".join([f"{self.table}.{c}" for c in valid_cols])
@@ -174,7 +198,6 @@ class QueryBuilder:
             count_val = cur.fetchone()[0]
             
             if self._select == "*" or "count=" in self._select:
-                # sometimes they do select("*", count="exact") or select("id", count="exact")
                 if "count=" in self._select and len(self._select.split(",")) == 1:
                     return Response([], count_val)
                 cur.execute(q, self._params)
@@ -193,9 +216,21 @@ class QueryBuilder:
             formatted = {}
             cards_obj = {}
             users_obj = {}
+            u1_obj = {}
+            u2_obj = {}
             for k, v in d.items():
+                if isinstance(v, str) and (v.startswith('{') or v.startswith('[')):
+                    try:
+                        v = json.loads(v)
+                    except json.JSONDecodeError:
+                        pass
+                
                 if k.startswith("c_"):
                     cards_obj[k[2:]] = v
+                elif k.startswith("u1_"):
+                    u1_obj[k[3:]] = v
+                elif k.startswith("u2_"):
+                    u2_obj[k[3:]] = v
                 elif k.startswith("u_"):
                     users_obj[k[2:]] = v
                 else:
@@ -203,11 +238,14 @@ class QueryBuilder:
             if cards_obj and "id" in cards_obj:
                 formatted['cards'] = cards_obj
             elif cards_obj and "c_id" in d:
-                # re-map back to dict
                 cards_obj['id'] = cards_obj.pop('id', d.get('c_id'))
                 formatted['cards'] = cards_obj
             if users_obj:
                 formatted['users'] = users_obj
+            if u1_obj:
+                formatted['u1'] = u1_obj
+            if u2_obj:
+                formatted['u2'] = u2_obj
             res.append(formatted)
         return res
 
