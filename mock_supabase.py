@@ -1,0 +1,262 @@
+import sqlite3
+import json
+
+class Response:
+    def __init__(self, data, count=None):
+        self.data = data
+        self.count = count
+
+class QueryBuilder:
+    def __init__(self, conn, table):
+        self.conn = conn
+        self.table = table
+        self._select = "*"
+        self._count = None
+        self._where = []
+        self._params = []
+        self._order = None
+        self._limit = None
+        self._data = None
+        self._action = "select"
+        self._offset = None
+
+    def select(self, cols="*", count=None):
+        self._select = cols
+        self._count = count
+        self._action = "select"
+        return self
+
+    def insert(self, data):
+        self._data = data
+        self._action = "insert"
+        return self
+
+    def upsert(self, data):
+        self._data = data
+        self._action = "upsert"
+        return self
+
+    def update(self, data):
+        self._data = data
+        self._action = "update"
+        return self
+
+    def delete(self):
+        self._action = "delete"
+        return self
+
+    def eq(self, col, val):
+        self._where.append(f"{self.table}.{col} = ?")
+        self._params.append(val)
+        return self
+
+    def neq(self, col, val):
+        self._where.append(f"{self.table}.{col} != ?")
+        self._params.append(val)
+        return self
+
+    def gt(self, col, val):
+        self._where.append(f"{self.table}.{col} > ?")
+        self._params.append(val)
+        return self
+
+    def gte(self, col, val):
+        self._where.append(f"{self.table}.{col} >= ?")
+        self._params.append(val)
+        return self
+
+    def lte(self, col, val):
+        self._where.append(f"{self.table}.{col} <= ?")
+        self._params.append(val)
+        return self
+
+    def ilike(self, col, val):
+        self._where.append(f"{self.table}.{col} LIKE ?")
+        self._params.append(val.replace("*", "%"))
+        return self
+
+    def in_(self, col, vals):
+        if not vals:
+            self._where.append("1=0")
+            return self
+        placeholders = ",".join(["?"] * len(vals))
+        self._where.append(f"{self.table}.{col} IN ({placeholders})")
+        self._params.extend(vals)
+        return self
+
+    def order(self, col, desc=False):
+        self._order = f"{col} {'DESC' if desc else 'ASC'}"
+        return self
+
+    def limit(self, val):
+        self._limit = val
+        return self
+
+    def range(self, start, end):
+        self._limit = end - start + 1
+        self._offset = start
+        return self
+
+    def execute(self):
+        cur = self.conn.cursor()
+        
+        try:
+            if self._action == "select":
+                return self._execute_select(cur)
+            elif self._action == "insert":
+                return self._execute_insert(cur)
+            elif self._action == "update":
+                return self._execute_update(cur)
+            elif self._action == "delete":
+                return self._execute_delete(cur)
+            elif self._action == "upsert":
+                return self._execute_upsert(cur)
+        finally:
+            self.conn.commit()
+
+    def _execute_select(self, cur):
+        # HARDCODED JOINS for specific Supabase queries
+        join_clause = ""
+        select_cols = f"{self.table}.*" if self._select == "*" else self._select
+
+        if self.table == "user_cards" and "cards(*)" in self._select:
+            join_clause = "JOIN cards ON user_cards.card_id = cards.id"
+            select_cols = "user_cards.count, user_cards.card_level, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_desc, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image"
+        
+        elif self.table == "user_squads" and "cards(*)" in self._select:
+            join_clause = "JOIN cards ON user_squads.card_id = cards.id"
+            select_cols = "user_squads.card_id, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_desc, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image"
+        
+        elif self.table == "clan_members" and "users(" in self._select:
+            join_clause = "JOIN users ON clan_members.user_id = users.telegram_id"
+            select_cols = "clan_members.role, users.first_name as u_fname, users.telegram_id as u_id"
+        
+        elif self.table == "market_listings" and "cards(*)" in self._select and "users!seller_id(first_name)" in self._select:
+            join_clause = "JOIN cards ON market_listings.card_id = cards.id JOIN users ON market_listings.seller_id = users.telegram_id"
+            select_cols = "market_listings.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, users.first_name as u_fname"
+
+        elif self.table == "trade_offers" and "cards!offered_card_id(*)" in self._select and "users!from_user_id(first_name)" in self._select:
+            join_clause = "LEFT JOIN cards ON trade_offers.offered_card_id = cards.id JOIN users ON trade_offers.from_user_id = users.telegram_id"
+            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, users.first_name as u_fname"
+            
+        elif self.table == "trade_offers" and "cards!offered_card_id(*)" in self._select and "users!to_user_id(first_name)" in self._select:
+            join_clause = "LEFT JOIN cards ON trade_offers.offered_card_id = cards.id JOIN users ON trade_offers.to_user_id = users.telegram_id"
+            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, users.first_name as u_fname"
+            
+        elif self.table == "users" and self._select == "first_name, battles_won, battles_total":
+             select_cols = "first_name, battles_won, battles_total"
+             
+        elif self.table == "cards" and self._select == "rarity":
+            select_cols = "cards.rarity"
+            
+        elif self._select != "*":
+            # For simple comma separated columns
+            cols = [c.strip() for c in self._select.split(",")]
+            # ignore count="exact" syntax mixed in select like select("*, count=exact") - wait, that's passed as arg
+            valid_cols = [c for c in cols if "(" not in c and "count=" not in c]
+            if valid_cols:
+                select_cols = ", ".join([f"{self.table}.{c}" for c in valid_cols])
+
+        q = f"SELECT {select_cols} FROM {self.table} {join_clause}"
+        if self._where:
+            q += " WHERE " + " AND ".join(self._where)
+        if self._order:
+            q += f" ORDER BY {self._order}"
+        if self._limit:
+            q += f" LIMIT {self._limit}"
+        if self._offset is not None:
+            q += f" OFFSET {self._offset}"
+
+        if self._count == "exact":
+            count_q = f"SELECT COUNT(*) FROM {self.table}"
+            if self._where: count_q += " WHERE " + " AND ".join(self._where)
+            cur.execute(count_q, self._params)
+            count_val = cur.fetchone()[0]
+            
+            if self._select == "*" or "count=" in self._select:
+                # sometimes they do select("*", count="exact") or select("id", count="exact")
+                if "count=" in self._select and len(self._select.split(",")) == 1:
+                    return Response([], count_val)
+                cur.execute(q, self._params)
+                return Response(self._format_results(cur.fetchall()), count_val)
+            else:
+                cur.execute(q, self._params)
+                return Response(self._format_results(cur.fetchall()), count_val)
+                
+        cur.execute(q, self._params)
+        return Response(self._format_results(cur.fetchall()))
+
+    def _format_results(self, rows):
+        res = []
+        for row in rows:
+            d = dict(row)
+            formatted = {}
+            cards_obj = {}
+            users_obj = {}
+            for k, v in d.items():
+                if k.startswith("c_"):
+                    cards_obj[k[2:]] = v
+                elif k.startswith("u_"):
+                    users_obj[k[2:]] = v
+                else:
+                    formatted[k] = v
+            if cards_obj and "id" in cards_obj:
+                formatted['cards'] = cards_obj
+            elif cards_obj and "c_id" in d:
+                # re-map back to dict
+                cards_obj['id'] = cards_obj.pop('id', d.get('c_id'))
+                formatted['cards'] = cards_obj
+            if users_obj:
+                formatted['users'] = users_obj
+            res.append(formatted)
+        return res
+
+    def _execute_insert(self, cur):
+        cols = list(self._data.keys())
+        vals = list(self._data.values())
+        phs = ",".join(["?"] * len(vals))
+        q = f"INSERT INTO {self.table} ({','.join(cols)}) VALUES ({phs}) RETURNING *"
+        try:
+            cur.execute(q, vals)
+            return Response([dict(r) for r in cur.fetchall()])
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE" in str(e):
+                raise Exception("23505 duplicate key")
+            raise e
+
+    def _execute_update(self, cur):
+        cols = list(self._data.keys())
+        vals = list(self._data.values())
+        set_clause = ", ".join([f"{c} = ?" for c in cols])
+        q = f"UPDATE {self.table} SET {set_clause}"
+        if self._where:
+            q += " WHERE " + " AND ".join(self._where)
+        cur.execute(q, vals + self._params)
+        return Response([])
+
+    def _execute_delete(self, cur):
+        q = f"DELETE FROM {self.table}"
+        if self._where:
+            q += " WHERE " + " AND ".join(self._where)
+        cur.execute(q, self._params)
+        return Response([])
+
+    def _execute_upsert(self, cur):
+        # sqlite replace into
+        cols = list(self._data.keys())
+        vals = list(self._data.values())
+        phs = ",".join(["?"] * len(vals))
+        q = f"REPLACE INTO {self.table} ({','.join(cols)}) VALUES ({phs})"
+        cur.execute(q, vals)
+        return Response([self._data])
+
+class MockSupabaseClient:
+    def __init__(self, db_path="cardsbot.db"):
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        
+    def table(self, name):
+        return QueryBuilder(self.conn, name)
+
+def create_client():
+    return MockSupabaseClient()

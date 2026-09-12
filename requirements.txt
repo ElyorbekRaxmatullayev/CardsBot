@@ -5,3 +5,4 @@ cryptography~=43.0.1
 pyTelegramBotAPI~=4.36.0
 python-dotenv~=1.0.1
 supabase
+cachetools
