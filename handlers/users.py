@@ -5,7 +5,9 @@ from telebot import types
 from database import (get_or_create_user, get_user_data, get_top_by_coins,
                       get_top_by_referrals, get_top_by_cards_count, get_top_by_value,
                       check_daily_bonus, set_daily_bonus_taken,
-                      add_card_to_user, get_all_cards, get_user_gems, get_user_rank)
+                      add_card_to_user, get_all_cards, get_user_gems, get_user_rank,
+                      get_top_by_damage, check_farm_available, do_farm_coins,
+                      get_user_marriage)
 from database import is_premium, get_clan_name, is_user_banned, update_task_progress, on_card_obtained
 from loader import bot
 from utils import safe_send_message, safe_edit_message
@@ -21,7 +23,7 @@ def get_main_reply_markup(selective=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, selective=selective)
     markup.row(types.KeyboardButton("🎴 Получить карту"), types.KeyboardButton("🗂 Мои карты"))
     markup.row(types.KeyboardButton("👥 Кланы"), types.KeyboardButton("🎮 Играть"), types.KeyboardButton("ℹ️ О нас"))
-    markup.row(types.KeyboardButton("⚙️ Настройки"))
+    markup.row(types.KeyboardButton("⛏️ Фарм"), types.KeyboardButton("❤️ Брак"), types.KeyboardButton("⚙️ Настройки"))
     return markup
 
 
@@ -69,6 +71,7 @@ def get_rating_markup():
         types.InlineKeyboardButton("💰 По коинам", callback_data="top_coins"),
         types.InlineKeyboardButton("🃏 По кол-ву карт", callback_data="top_count"),
         types.InlineKeyboardButton("💎 По ценности", callback_data="top_value"),
+        types.InlineKeyboardButton("⚔️ По урону (Арена)", callback_data="top_damage"),
         types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu")
     )
     return markup
@@ -134,7 +137,7 @@ def game_menu_handler(message):
         bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")
         return
     txt = "🔽 <b>Выберите раздел:</b>"
-    safe_send_message(bot, message.chat.id, txt, reply_markup=get_game_inline_markup(), parse_mode="HTML")
+    safe_send_message(bot, message.chat.id, txt, reply_markup=get_game_inline_markup(), parse_mode="HTML", owner_id=message.from_user.id)
 
 
 @bot.message_handler(func=lambda m: m.text == "ℹ️ О нас")
@@ -205,13 +208,23 @@ def callback_profile(call):
     gems = get_user_gems(user_id)
     rank = get_user_rank(user_id)
     packs_opened = user.get('packs_opened', 0) or 0
-
     winrate = f"{int(wins / total * 100)}%" if total > 0 else "—"
+
+    # Брак
+    marriage = get_user_marriage(user_id)
+    if marriage:
+        partner_data = marriage.get('u2') if marriage['user1_id'] == user_id else marriage.get('u1')
+        partner_name = partner_data.get('first_name', '?') if partner_data else '?'
+        partner_username = partner_data.get('username') if partner_data else None
+        marriage_txt = f"❤️ @{partner_username}" if partner_username else f"❤️ {partner_name}"
+    else:
+        marriage_txt = "❌ Нет"
 
     txt = (f"👤 <b>Профиль игрока</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"📛 <b>Ник:</b> {user['first_name']}\n"
            f"🏰 <b>Клан:</b> {clan_name}\n"
+           f"❤️ <b>Брак:</b> {marriage_txt}\n"
            f"🏆 <b>Место в рейтинге:</b> #{rank}\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"💰 <b>Монеты:</b> {user['coins']}\n"
@@ -268,6 +281,10 @@ def show_top(call):
     elif category == "value":
         data = get_top_by_value()
         metric, field = "💎", "value"
+    elif category == "damage":
+        data = get_top_by_damage()
+        metric, field = "⚔️", "value"
+        txt = "⚔️ <b>Топ по урону (Арена)</b>\n\n"
     else:
         data = get_top_by_coins()
         metric, field = "💰", "coins"
@@ -327,8 +344,10 @@ def get_daily_bonus(call):
     update_task_progress(user_id, "claim_bonus", "daily")
     set_daily_bonus_taken(user_id)
 
-    from config import RARITY_CONFIG
-    txt = (f"🎁 <b>Ежедневный бонус получен!</b>\n\n"
+    # Показываем ник получателя бонуса в чате
+    user_tg = call.from_user
+    user_mention = f"@{user_tg.username}" if user_tg.username else f"<b>{user_tg.first_name}</b>"
+    txt = (f"🎁 {user_mention} получил ежедневный бонус!\n\n"
            f"Вы получили 3 карты:\n"
            f"1. {received[0]}\n2. {received[1]}\n3. {received[2]}\n\n"
            f"Возвращайся завтра за новым бонусом!")
@@ -336,10 +355,41 @@ def get_daily_bonus(call):
                       reply_markup=get_back_markup(), parse_mode="HTML")
 
 
+# --- ФАРМ МОНЕТ ---
+
+@bot.message_handler(func=lambda m: m.text == "⛏️ Фарм")
+def farm_handler(message):
+    if is_user_banned(message.from_user.id):
+        bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")
+        return
+
+    user_id = message.from_user.id
+    available, seconds_left = check_farm_available(user_id)
+
+    if not available:
+        hours_left = seconds_left // 3600
+        minutes_left = (seconds_left % 3600) // 60
+        bot.send_message(
+            message.chat.id,
+            f"⏳ Фарм ещё не готов!\n"
+            f"Ожидай: {hours_left}ч {minutes_left}мин",
+            reply_to_message_id=message.message_id if message.chat.type != 'private' else None
+        )
+        return
+
+    amount = do_farm_coins(user_id)
+    user_mention = f"@{message.from_user.username}" if message.from_user.username else f"<b>{message.from_user.first_name}</b>"
+    bot.send_message(
+        message.chat.id,
+        f"⛏️ {user_mention} собрал монеты на ферме!\n"
+        f"💰 +<b>{amount}</b> монет\n\n"
+        f"⏳ Следующий фарм через 4 часа.",
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id if message.chat.type != 'private' else None
+    )
+
+
 @bot.callback_query_handler(func=lambda call: call.data == "ignore")
 def callback_ignore(call):
     """Кнопки-разделители (счётчики страниц и т.п.) — просто гасим спиннер"""
     bot.answer_callback_query(call.id)
-
-
-

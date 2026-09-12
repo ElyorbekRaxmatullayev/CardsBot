@@ -185,7 +185,8 @@ def pack_open(call):
     update_task_progress(user_id, "open_packs_10", "weekly")
 
     # Формируем текст
-    txt = f"🎴 <b>{cfg['name']} открыт!</b>\n➖➖➖➖➖➖➖➖\n\nВы получили:\n\n"
+    user_mention = f"@{call.from_user.username}" if call.from_user.username else f"<b>{call.from_user.first_name}</b>"
+    txt = f"🎴 {user_mention} открыл <b>{cfg['name']}!</b>\n➖➖➖➖➖➖➖➖\n\nВы получили:\n\n"
     for card in cards:
         txt += format_card_line(card) + "\n"
 

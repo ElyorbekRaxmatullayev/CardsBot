@@ -18,7 +18,11 @@ def get_or_create_user(user_id, username, first_name, referrer_id=None):
             "referrer_id": referrer_id,
             "coins": 100
         }
-        supabase.table("users").insert(data).execute()
+        try:
+            supabase.table("users").insert(data).execute()
+        except Exception as e:
+            if "23505" not in str(e) and "duplicate key" not in str(e):
+                raise
 
         if referrer_id:
             try:
@@ -378,26 +382,31 @@ def find_opponent(user_id):
     return None, None
 
 
-def update_battle_stats(winner_id, loser_id):
+def update_battle_stats(winner_id, loser_id, w_dmg=0, l_dmg=0):
     # Победитель
-    w = supabase.table("users").select("coins, rating, battles_won, battles_total").eq("telegram_id",
+    w = supabase.table("users").select("coins, rating, battles_won, battles_total, total_damage_dealt").eq("telegram_id",
                                                                                        winner_id).execute().data[0]
+    w_dmg_prev = w.get('total_damage_dealt', 0) or 0
     supabase.table("users").update({
-        "coins": w['coins'] + 50,  # Награда
+        "coins": w['coins'] + 10,  # Награда
         "rating": w['rating'] + 25,
         "battles_won": w['battles_won'] + 1,
-        "battles_total": w['battles_total'] + 1
+        "battles_total": w['battles_total'] + 1,
+        "total_damage_dealt": w_dmg_prev + w_dmg
     }).eq("telegram_id", winner_id).execute()
 
     # Проигравший
-    l = supabase.table("users").select("rating, battles_total").eq("telegram_id", loser_id).execute().data[0]
+    l = supabase.table("users").select("rating, battles_total, total_damage_dealt").eq("telegram_id", loser_id).execute().data[0]
     new_rating = l['rating'] - 15
     if new_rating < 0: new_rating = 0
+    l_dmg_prev = l.get('total_damage_dealt', 0) or 0
 
     supabase.table("users").update({
         "rating": new_rating,
-        "battles_total": l['battles_total'] + 1
+        "battles_total": l['battles_total'] + 1,
+        "total_damage_dealt": l_dmg_prev + l_dmg
     }).eq("telegram_id", loser_id).execute()
+
 
 
 # --- GEMS (ВТОРАЯ ВАЛЮТА) ---
@@ -464,26 +473,46 @@ def increment_packs_opened(user_id):
 def get_user_task_progress(user_id, period="daily"):
     """Получает прогресс заданий (daily/weekly)"""
     res = supabase.table("user_tasks").select("*").eq("user_id", user_id).eq("period", period).execute()
-    # Возвращаем dict {task_id: {progress, claimed}}
+    
+    now = datetime.now(timezone.utc)
+    need_reset = False
     result = {}
+    
     if res.data:
         for row in res.data:
+            if row.get('updated_at'):
+                updated_at = datetime.fromisoformat(row['updated_at'].replace('Z', '+00:00'))
+                if period == "daily" and updated_at.date() < now.date():
+                    need_reset = True
+                    break
+                elif period == "weekly" and updated_at.isocalendar()[1] < now.isocalendar()[1]:
+                    need_reset = True
+                    break
             result[row['task_id']] = {"progress": row.get('progress', 0), "claimed": row.get('claimed', False)}
+            
+    if need_reset:
+        supabase.table("user_tasks").delete().eq("user_id", user_id).eq("period", period).execute()
+        return {}
+        
     return result
 
 
 def update_task_progress(user_id, task_id, period, increment=1):
     """Обновляет прогресс задания"""
+    # Auto-reset old tasks before updating
+    get_user_task_progress(user_id, period)
+    
     existing = supabase.table("user_tasks").select("*").eq("user_id", user_id).eq("task_id", task_id).eq("period", period).execute()
+    now_str = datetime.now(timezone.utc).isoformat()
     if existing.data:
         row = existing.data[0]
         if row.get('claimed'):
             return  # уже получена награда
         new_progress = row.get('progress', 0) + increment
-        supabase.table("user_tasks").update({"progress": new_progress}).eq("id", row['id']).execute()
+        supabase.table("user_tasks").update({"progress": new_progress, "updated_at": now_str}).eq("id", row['id']).execute()
     else:
         supabase.table("user_tasks").insert({
-            "user_id": user_id, "task_id": task_id, "period": period, "progress": increment, "claimed": False
+            "user_id": user_id, "task_id": task_id, "period": period, "progress": increment, "claimed": False, "updated_at": now_str
         }).execute()
 
 
@@ -783,6 +812,17 @@ def search_clans(query):
     return res.data or []
 
 
+def delete_clan(clan_id, owner_id):
+    """Удаляет клан (только для лидера)"""
+    clan = get_clan_info(clan_id)
+    if not clan or clan['owner_id'] != owner_id:
+        return False, "Нет прав на удаление клана"
+    
+    supabase.table("users").update({"clan_id": None}).eq("clan_id", clan_id).execute()
+    supabase.table("clans").delete().eq("id", clan_id).execute()
+    return True, "Клан успешно удален"
+
+
 def get_all_users_count():
     """Общее количество пользователей"""
     res = supabase.table("users").select("telegram_id", count="exact").execute()
@@ -973,3 +1013,245 @@ def grant_premium(user_id, days):
     new_until = base + timedelta(days=days)
     supabase.table("users").update({"premium_until": new_until.isoformat()}).eq("telegram_id", user_id).execute()
     return True
+
+
+def get_premium_auto_renew_candidates():
+    """Получает пользователей, у которых истёк премиум, но включено автопродление"""
+    now = datetime.now(timezone.utc).isoformat()
+    res = supabase.table("users").select("telegram_id, gems").eq("premium_auto_renew", True).lte("premium_until", now).execute()
+    return res.data or []
+
+
+def disable_premium_auto_renew(user_id):
+    """Отключает автопродление (например, при нехватке Gems)"""
+    supabase.table("users").update({"premium_auto_renew": False}).eq("telegram_id", user_id).execute()
+
+
+# --- ФАРМ МОНЕТ ---
+
+def check_farm_available(user_id):
+    """Проверяет, доступен ли фарм монет (кулдаун 4 часа). Возвращает (available: bool, seconds_left: int)"""
+    from config import FARM_COOLDOWN_HOURS
+    user = get_user_data(user_id)
+    if not user:
+        return False, 0
+    last_farm = user.get('last_farm_at')
+    if not last_farm:
+        return True, 0
+    now = datetime.now(timezone.utc)
+    last = datetime.fromisoformat(last_farm.replace('Z', '+00:00'))
+    diff = now - last
+    cooldown = timedelta(hours=FARM_COOLDOWN_HOURS)
+    if diff >= cooldown:
+        return True, 0
+    seconds_left = int((cooldown - diff).total_seconds())
+    return False, seconds_left
+
+
+def do_farm_coins(user_id):
+    """Выполняет фарм монет — начисляет рандомно 1–100 монет. Возвращает (amount: int)"""
+    import random
+    from config import FARM_MAX_COINS
+    amount = random.randint(1, FARM_MAX_COINS)
+    now = datetime.now(timezone.utc).isoformat()
+    user = get_user_data(user_id)
+    if not user:
+        return 0
+    supabase.table("users").update({
+        "coins": user['coins'] + amount,
+        "last_farm_at": now
+    }).eq("telegram_id", user_id).execute()
+    return amount
+
+
+# --- РЕЙТИНГ АРЕНЫ ПО УРОНУ ---
+
+def update_battle_stats_with_damage(winner_id, loser_id, winner_damage, loser_damage):
+    """Обновляет статистику боя с учётом нанесённого урона. Награда победителю: 10 монет."""
+    w = supabase.table("users").select("coins, rating, battles_won, battles_total, total_damage_dealt").eq(
+        "telegram_id", winner_id).execute().data[0]
+    supabase.table("users").update({
+        "coins": w['coins'] + 10,  # Награда: 10 монет
+        "rating": w['rating'] + 25,
+        "battles_won": w['battles_won'] + 1,
+        "battles_total": w['battles_total'] + 1,
+        "total_damage_dealt": (w.get('total_damage_dealt') or 0) + winner_damage,
+    }).eq("telegram_id", winner_id).execute()
+
+    l = supabase.table("users").select("rating, battles_total, total_damage_dealt").eq(
+        "telegram_id", loser_id).execute().data[0]
+    new_rating = max(0, l['rating'] - 15)
+    supabase.table("users").update({
+        "rating": new_rating,
+        "battles_total": l['battles_total'] + 1,
+        "total_damage_dealt": (l.get('total_damage_dealt') or 0) + loser_damage,
+    }).eq("telegram_id", loser_id).execute()
+
+
+def get_top_by_damage(limit=10):
+    """Топ игроков по суммарному нанесённому урону"""
+    res = supabase.table("users").select("first_name, total_damage_dealt").order(
+        "total_damage_dealt", desc=True).limit(limit).execute()
+    return [{"first_name": u['first_name'], "value": u.get('total_damage_dealt') or 0} for u in (res.data or [])]
+
+
+# --- БРАКИ ---
+
+def get_user_marriage(user_id):
+    """Возвращает активный брак пользователя или None"""
+    res = supabase.table("marriages").select("*, u1:users!marriages_user1_id_fkey(first_name, username), u2:users!marriages_user2_id_fkey(first_name, username)").eq("status", "active").or_(
+        f"user1_id.eq.{user_id},user2_id.eq.{user_id}"
+    ).execute()
+    return res.data[0] if res.data else None
+
+
+def get_pending_marriage_request(user_id):
+    """Возвращает входящую заявку на брак (status=pending, user2_id=user_id)"""
+    res = supabase.table("marriages").select("*, users!marriages_user1_id_fkey(first_name, username)").eq(
+        "user2_id", user_id).eq("status", "pending").execute()
+    return res.data[0] if res.data else None
+
+
+def get_sent_marriage_request(user_id):
+    """Возвращает исходящую заявку (status=pending, user1_id=user_id)"""
+    res = supabase.table("marriages").select("*").eq("user1_id", user_id).eq("status", "pending").execute()
+    return res.data[0] if res.data else None
+
+
+def propose_marriage(from_user_id, to_user_id):
+    """Отправляет заявку на брак. Возвращает (success, message)"""
+    # Проверяем, уже в браке
+    if get_user_marriage(from_user_id):
+        return False, "Вы уже в браке!"
+    if get_user_marriage(to_user_id):
+        return False, "Этот игрок уже в браке!"
+    # Уже отправляли заявку?
+    if get_sent_marriage_request(from_user_id):
+        return False, "Вы уже отправили заявку на брак!"
+    # Нельзя самому себе
+    if from_user_id == to_user_id:
+        return False, "Нельзя предложить брак самому себе!"
+    try:
+        supabase.table("marriages").insert({
+            "user1_id": from_user_id,
+            "user2_id": to_user_id,
+            "status": "pending"
+        }).execute()
+        return True, "ok"
+    except Exception as e:
+        return False, f"Ошибка: {e}"
+
+
+def accept_marriage(marriage_id, user_id):
+    """Принимает заявку на брак"""
+    res = supabase.table("marriages").select("*").eq("id", marriage_id).eq("user2_id", user_id).eq("status", "pending").execute()
+    if not res.data:
+        return False, "Заявка не найдена"
+    supabase.table("marriages").update({"status": "active"}).eq("id", marriage_id).execute()
+    return True, "ok"
+
+
+def reject_marriage(marriage_id, user_id):
+    """Отклоняет заявку на брак"""
+    supabase.table("marriages").update({"status": "rejected"}).eq("id", marriage_id).eq(
+        "user2_id", user_id).eq("status", "pending").execute()
+    return True, "ok"
+
+
+def divorce(user_id):
+    """Разводит пользователя (устанавливает статус 'divorced')"""
+    supabase.table("marriages").update({"status": "divorced"}).eq("status", "active").or_(
+        f"user1_id.eq.{user_id},user2_id.eq.{user_id}"
+    ).execute()
+    return True
+
+
+def find_user_by_username(username):
+    """Ищет пользователя по username (без @)"""
+    q = username.lstrip('@').strip()
+    res = supabase.table("users").select("telegram_id, first_name, username").ilike("username", q).limit(1).execute()
+    return res.data[0] if res.data else None
+
+
+# --- ВСЕ КЛАНЫ ---
+
+def get_all_clans_list(page=0, page_size=8):
+    """Список всех кланов с количеством участников для отображения"""
+    start = page * page_size
+    end = start + page_size - 1
+
+    count_res = supabase.table("clans").select("id", count="exact").execute()
+    total = count_res.count or 0
+
+    res = supabase.table("clans").select("id, name, owner_id").order("id").range(start, end).execute()
+    clans = res.data or []
+
+    # Подсчёт участников для каждого клана
+    result = []
+    for clan in clans:
+        mem_res = supabase.table("clan_members").select("user_id", count="exact").eq("clan_id", clan['id']).execute()
+        clan['members_count'] = mem_res.count or 0
+        result.append(clan)
+    return result, total
+
+
+# --- ЗАЯВКИ В КЛАНЫ ---
+
+def request_join_clan(user_id, clan_id):
+    """Создаёт заявку на вступление в клан. Возвращает (success, message)"""
+    user = get_user_data(user_id)
+    if not user:
+        return False, "Ошибка"
+    if user.get('clan_id'):
+        return False, "Вы уже в клане"
+    # Проверить уже существующую заявку
+    existing = supabase.table("clan_join_requests").select("*").eq("clan_id", clan_id).eq("user_id", user_id).eq("status", "pending").execute()
+    if existing.data:
+        return False, "Вы уже отправили заявку в этот клан"
+    try:
+        supabase.table("clan_join_requests").insert({
+            "clan_id": clan_id, "user_id": user_id, "status": "pending"
+        }).execute()
+        return True, "ok"
+    except Exception as e:
+        return False, f"Ошибка: {e}"
+
+
+def get_pending_clan_requests(clan_id):
+    """Получает список ожидающих заявок для лидера"""
+    res = supabase.table("clan_join_requests").select("id, user_id, users(first_name, username)").eq(
+        "clan_id", clan_id).eq("status", "pending").execute()
+    return res.data or []
+
+
+def accept_clan_request(request_id, leader_id):
+    """Лидер принимает заявку"""
+    req_res = supabase.table("clan_join_requests").select("*").eq("id", request_id).eq("status", "pending").execute()
+    if not req_res.data:
+        return False, "Заявка не найдена"
+    req = req_res.data[0]
+
+    # Проверяем, что leader_id — лидер этого клана
+    clan = get_clan_info(req['clan_id'])
+    if not clan or clan['owner_id'] != leader_id:
+        return False, "Нет прав"
+
+    # Вступаем
+    success, msg = join_clan(req['user_id'], req['clan_id'])
+    if success:
+        supabase.table("clan_join_requests").update({"status": "accepted"}).eq("id", request_id).execute()
+    return success, msg
+
+
+def reject_clan_request(request_id, leader_id):
+    """Лидер отклоняет заявку"""
+    req_res = supabase.table("clan_join_requests").select("*").eq("id", request_id).eq("status", "pending").execute()
+    if not req_res.data:
+        return False, "Заявка не найдена"
+    req = req_res.data[0]
+    clan = get_clan_info(req['clan_id'])
+    if not clan or clan['owner_id'] != leader_id:
+        return False, "Нет прав"
+    supabase.table("clan_join_requests").update({"status": "rejected"}).eq("id", request_id).execute()
+    return True, "Заявка отклонена"
+

@@ -26,7 +26,7 @@ RARITY_ORDER = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Di
 PACK_CONFIG = {
     "standard": {
         "name": "📦 Стандартный пак",
-        "price_coins": 200,
+        "price_coins": 400,
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
@@ -37,7 +37,7 @@ PACK_CONFIG = {
     },
     "rare": {
         "name": "🔵 Редкий пак",
-        "price_coins": 500,
+        "price_coins": 700,
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
@@ -48,8 +48,8 @@ PACK_CONFIG = {
     },
     "epic": {
         "name": "🟣 Эпический пак",
-        "price_coins": 1000,
-        "price_gems": 5,
+        "price_coins": 1200,
+        "price_gems": 10,
         "cards_count": 5,
         "rarity_weights": {
             "Common": 5, "Uncommon": 15, "Rare": 30, "Epic": 30,
@@ -60,7 +60,7 @@ PACK_CONFIG = {
     "legendary": {
         "name": "🟡 Легендарный пак",
         "price_coins": 0,
-        "price_gems": 20,
+        "price_gems": 25,
         "cards_count": 5,
         "rarity_weights": {
             "Common": 0, "Uncommon": 5, "Rare": 15, "Epic": 30,
@@ -71,7 +71,7 @@ PACK_CONFIG = {
     "mythic": {
         "name": "🔴 Мифический пак",
         "price_coins": 0,
-        "price_gems": 50,
+        "price_gems": 55,
         "cards_count": 5,
         "rarity_weights": {
             "Common": 0, "Uncommon": 0, "Rare": 5, "Epic": 20,
@@ -81,7 +81,7 @@ PACK_CONFIG = {
     },
     "event": {
         "name": "🎉 Событийный пак",
-        "price_coins": 300,
+        "price_coins": 500,
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
@@ -252,12 +252,15 @@ EVENT_TEXTS = {
 }
 
 # --- ЭКОНОМИКА ---
-PREMIUM_COST = 5000
+PREMIUM_COST = 5000          # устарело, оставлено для совместимости
+PREMIUM_COST_GEMS = 100      # Цена премиума в Gems (в месяц)
 PREMIUM_DAYS = 30
 CLAN_CREATE_COST = 1000
 DROP_COOLDOWN = 3
-DROP_COOLDOWN_PREMIUM = 2
-MARKET_FEE_PERCENT = 5  # комиссия торговой площадки %
+DROP_COOLDOWN_PREMIUM = 1.5  # 1 час 30 минут
+FARM_COOLDOWN_HOURS = 4      # Кулдаун фарма монет
+FARM_MAX_COINS = 100         # Максимум монет за фарм
+MARKET_FEE_PERCENT = 5       # комиссия торговой площадки %
 
 # --- УЛУЧШЕНИЕ КАРТ (FUSION) ---
 FUSE_REQUIRED_COPIES = 3       # сколько дублей нужно слить для +1 уровня

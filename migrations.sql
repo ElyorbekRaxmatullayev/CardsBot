@@ -241,4 +241,42 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS total_epic_obtained INTEGER DEFAULT 0
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'admin';
 UPDATE admins SET role = 'head' WHERE telegram_id = 5884034743;
 
+-- =============================================
+-- ДОПОЛНЕНИЕ: Фарм монет, автопродление Premium,
+--             рейтинг арены по урону, браки, заявки в кланы
+-- =============================================
+
+-- Фарм монет (каждые 4 часа)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_farm_at TIMESTAMPTZ;
+
+-- Автопродление Premium (включено по умолчанию)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_auto_renew BOOLEAN DEFAULT TRUE;
+
+-- Накопленный урон в бою (рейтинг арены)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS total_damage_dealt INTEGER DEFAULT 0;
+
+-- Браки между пользователями
+CREATE TABLE IF NOT EXISTS marriages (
+    id BIGSERIAL PRIMARY KEY,
+    user1_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    user2_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'pending',  -- pending / active / rejected
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE marriages DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_marriages_user1 ON marriages(user1_id);
+CREATE INDEX IF NOT EXISTS idx_marriages_user2 ON marriages(user2_id);
+
+-- Заявки на вступление в кланы (требует подтверждения лидера)
+CREATE TABLE IF NOT EXISTS clan_join_requests (
+    id BIGSERIAL PRIMARY KEY,
+    clan_id BIGINT NOT NULL REFERENCES clans(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'pending',  -- pending / accepted / rejected
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(clan_id, user_id)
+);
+ALTER TABLE clan_join_requests DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_clan_requests_clan ON clan_join_requests(clan_id);
+
 SELECT 'All tables created successfully!' AS result;

@@ -80,6 +80,39 @@ class SubscriptionGateMiddleware(BaseMiddleware):
         pass
 
 
+class ButtonProtectionMiddleware(BaseMiddleware):
+    """
+    Защищает inline-кнопки в общих чатах. Если сообщение имеет владельца
+    (тот, кто вызвал команду), то другие не смогут нажимать его кнопки.
+    """
+    def __init__(self):
+        super().__init__()
+        self.update_types = ['callback_query']
+
+    def pre_process(self, update, data):
+        if not isinstance(update, CallbackQuery):
+            return
+            
+        # Пропускаем некоторые общие кнопки (если нужно)
+        if update.data.startswith("clan_join_req:") or update.data.startswith("arena_"):
+            # Для арены и кланов кнопки могут нажимать другие (если это предусмотрено логикой)
+            # Если логика строго на владельце, уберем этот if. Оставим пока так.
+            pass
+
+        from utils import _msg_owners
+        msg = update.message
+        if msg:
+            key = f"{msg.chat.id}_{msg.message_id}"
+            owner_id = _msg_owners.get(key)
+            if owner_id and owner_id != update.from_user.id:
+                bot.answer_callback_query(update.id, "❌ Это не ваши кнопки!", show_alert=True)
+                return CancelUpdate()
+
+    def post_process(self, update, data, exception):
+        pass
+
+
 def register_middlewares():
     bot.setup_middleware(EnsureUserMiddleware())
     bot.setup_middleware(SubscriptionGateMiddleware())
+    bot.setup_middleware(ButtonProtectionMiddleware())

@@ -244,7 +244,7 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
         enemy_name_w = p1_user['first_name']
         enemy_name_l = p2_user['first_name']
 
-    update_battle_stats(winner_id, loser_id)
+    update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
 
     # Обновляем счётчики заданий: "провести бой" — обоим, "выиграть бой" — только победителю
     update_task_progress(player1_id, "arena_battle", "daily")
@@ -255,7 +255,7 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
                f"Противник: <b>{enemy_name_w}</b> повержен!\n"
                f"Ваше здоровье: {w_hp_left}\n"
                f"Урон нанесен: {w_dmg}\n\n"
-               f"💰 Награда: +50 монет, +25 рейтинга")
+               f"💰 Награда: +10 монет, +25 рейтинга")
 
     res_lose = (f"💀 <b>ПОРАЖЕНИЕ...</b>\n\n"
                 f"Противник: <b>{enemy_name_l}</b> оказался сильнее.\n"

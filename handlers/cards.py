@@ -35,9 +35,13 @@ def handler_get_card(message):
     # Проверка таймера
     if user['last_timed_drop']:
         last_drop = datetime.fromisoformat(user['last_timed_drop'])
-        if now - last_drop < timedelta(hours=cooldown_hours):
-            diff = timedelta(hours=cooldown_hours) - (now - last_drop)
-            hours, rem = divmod(diff.seconds, 3600)
+        if last_drop.tzinfo is None:
+            last_drop = last_drop.replace(tzinfo=timezone.utc)
+        from datetime import timedelta as _td
+        if now - last_drop < _td(hours=cooldown_hours):
+            diff = _td(hours=cooldown_hours) - (now - last_drop)
+            total_seconds = int(diff.total_seconds())
+            hours, rem = divmod(total_seconds, 3600)
             minutes, _ = divmod(rem, 60)
             bot.send_message(message.chat.id, f"⏳ Жди еще: {hours}ч {minutes}мин")
             return
@@ -50,9 +54,15 @@ def handler_get_card(message):
     is_dup, count = add_card_to_user(message.from_user.id, card['id'])
     update_last_drop(message.from_user.id, now.isoformat())
     on_card_obtained(message.from_user.id, card, is_dup)
+    update_task_progress(message.from_user.id, "get_card", "daily")
 
     emoji = RARITY_CONFIG.get(card['rarity'], {}).get('emoji', '')
-    caption = f"{emoji} <b>{card['name']}</b>\n⭐️ {card['rarity']}\n⚔️ {card['attack']} | ❤️ {card['hp']}"
+    # Формируем упоминание игрока
+    user_mention = f"@{message.from_user.username}" if message.from_user.username else f"<b>{message.from_user.first_name}</b>"
+    caption = (f"👤 {user_mention} получил карту:\n"
+               f"{emoji} <b>{card['name']}</b>\n"
+               f"⭐️ {card['rarity']}\n"
+               f"⚔️ {card['attack']} | ❤️ {card['hp']}")
     if is_dup: caption += f"\n♻️ Дубликат (x{count})"
 
     if card['image_file_id']:
