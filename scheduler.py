@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from database import get_users_for_notification, ping_database, get_premium_auto_renew_candidates, disable_premium_auto_renew, update_gems, grant_premium
 from loader import bot
-from config import PREMIUM_COST
+from config import PREMIUM_COST_GEMS
 
 KEEPALIVE_INTERVAL_SECONDS = 6 * 60 * 60
 
@@ -64,13 +64,13 @@ def process_premium_renewals():
     for c in candidates:
         user_id = c['telegram_id']
         gems = c['gems'] or 0
-        if gems >= PREMIUM_COST:
+        if gems >= PREMIUM_COST_GEMS:
             # Продлеваем
-            success = update_gems(user_id, -PREMIUM_COST)
+            success = update_gems(user_id, -PREMIUM_COST_GEMS)
             if success:
                 grant_premium(user_id, 30)
                 try:
-                    bot.send_message(user_id, "🌟 <b>Ваш Premium был автоматически продлён на 30 дней!</b> (Списано 100 Gems)", parse_mode="HTML")
+                    bot.send_message(user_id, f"🌟 <b>Ваш Premium был автоматически продлён на 30 дней!</b> (Списано {PREMIUM_COST_GEMS} Gems)", parse_mode="HTML")
                 except:
                     pass
             else:
@@ -78,7 +78,7 @@ def process_premium_renewals():
         else:
             disable_premium_auto_renew(user_id)
             try:
-                bot.send_message(user_id, "⚠️ <b>Не удалось продлить Premium.</b>\nНедостаточно Gems (нужно 100). Автопродление отключено.", parse_mode="HTML")
+                bot.send_message(user_id, f"⚠️ <b>Не удалось продлить Premium.</b>\nНедостаточно Gems (нужно {PREMIUM_COST_GEMS}). Автопродление отключено.", parse_mode="HTML")
             except:
                 pass
 

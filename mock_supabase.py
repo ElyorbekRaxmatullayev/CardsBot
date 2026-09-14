@@ -249,9 +249,17 @@ class QueryBuilder:
             res.append(formatted)
         return res
 
+    @staticmethod
+    def _serialize(vals):
+        # Симметрично _format_results, который парсит JSON-строки обратно в
+        # dict/list при чтении: тут сериализуем dict/list в JSON-текст перед
+        # записью, иначе sqlite3 падает с "type 'dict' is not supported"
+        # (например при записи notification_settings как обычного dict).
+        return [json.dumps(v) if isinstance(v, (dict, list)) else v for v in vals]
+
     def _execute_insert(self, cur):
         cols = list(self._data.keys())
-        vals = list(self._data.values())
+        vals = self._serialize(self._data.values())
         phs = ",".join(["?"] * len(vals))
         q = f"INSERT INTO {self.table} ({','.join(cols)}) VALUES ({phs}) RETURNING *"
         try:
@@ -264,25 +272,29 @@ class QueryBuilder:
 
     def _execute_update(self, cur):
         cols = list(self._data.keys())
-        vals = list(self._data.values())
+        vals = self._serialize(self._data.values())
         set_clause = ", ".join([f"{c} = ?" for c in cols])
         q = f"UPDATE {self.table} SET {set_clause}"
         if self._where:
             q += " WHERE " + " AND ".join(self._where)
         cur.execute(q, vals + self._params)
-        return Response([])
+        # cur.rowcount = сколько строк реально затронуло — используем это как
+        # атомарный "клейм" (WHERE со старым статусом), чтобы гонка из двух
+        # параллельных запросов (двойной клик/автокликер) не могла провести
+        # одну и ту же операцию (покупку, обмен, улучшение) дважды.
+        return Response([], count=cur.rowcount)
 
     def _execute_delete(self, cur):
         q = f"DELETE FROM {self.table}"
         if self._where:
             q += " WHERE " + " AND ".join(self._where)
         cur.execute(q, self._params)
-        return Response([])
+        return Response([], count=cur.rowcount)
 
     def _execute_upsert(self, cur):
         # sqlite replace into
         cols = list(self._data.keys())
-        vals = list(self._data.values())
+        vals = self._serialize(self._data.values())
         phs = ",".join(["?"] * len(vals))
         q = f"REPLACE INTO {self.table} ({','.join(cols)}) VALUES ({phs})"
         cur.execute(q, vals)
@@ -292,7 +304,13 @@ class MockSupabaseClient:
     def __init__(self, db_path="cardsbot.db"):
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        
+        # SQLite по умолчанию НЕ проверяет внешние ключи — это per-connection
+        # настройка, а не свойство файла БД. Без неё все ON DELETE CASCADE в
+        # схеме (например cards -> user_cards/user_squads) были мёртвой буквой:
+        # при удалении карты админом записи в user_squads/user_cards оставались
+        # висеть "призраками" — карты нет, а слот в отряде всё ещё занят.
+        self.conn.execute("PRAGMA foreign_keys = ON")
+
     def table(self, name):
         return QueryBuilder(self.conn, name)
 

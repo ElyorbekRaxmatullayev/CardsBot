@@ -212,13 +212,17 @@ def get_top_by_cards_count(limit=10):
 
 
 def get_top_by_value(limit=10):
-    """Топ по суммарной стоимости коллекции (value карты * количество)"""
-    res = supabase.table("user_cards").select("user_id, count, cards(value)").execute()
+    """Топ по суммарной стоимости коллекции (value карты * количество).
+    Джойн card(value) делаем вручную в Python — мок supabase поверх sqlite
+    не умеет произвольные embedded-select'ы вида cards(value), только
+    захардкоженные cards(*) в паре мест, поэтому полагаться на него тут нельзя."""
+    card_values = {c['id']: (c.get('value') or 0) for c in (get_all_cards() or [])}
+
+    res = supabase.table("user_cards").select("user_id, card_id, count").execute()
     totals = {}
     for row in (res.data or []):
         uid = row['user_id']
-        card = row.get('cards') or {}
-        value = (card.get('value') or 0) * (row.get('count') or 0)
+        value = card_values.get(row['card_id'], 0) * (row.get('count') or 0)
         totals[uid] = totals.get(uid, 0) + value
 
     sorted_ids = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:limit]
@@ -550,7 +554,16 @@ def award_achievement(user_id, achievement_id):
 # --- ОБМЕН (TRADE) ---
 
 def create_trade_offer(from_user_id, to_user_id, offered_card_id, wanted_card_id=None):
-    """Создаёт предложение обмена"""
+    """Создаёт предложение обмена. Возвращает (trade_id, error_message) — ровно
+    один из них не None. Ограничиваем число одновременных исходящих заявок
+    одного игрока: без этого спамом (в т.ч. автокликером) можно закинуть сотни
+    заявок на одну и ту же карту — см. фикс дублирования в _transfer_card."""
+    from config import MAX_PENDING_TRADE_OFFERS
+    pending = supabase.table("trade_offers").select("id", count="exact").eq(
+        "from_user_id", from_user_id).eq("status", "pending").execute()
+    if (pending.count or 0) >= MAX_PENDING_TRADE_OFFERS:
+        return None, f"Слишком много активных предложений (максимум {MAX_PENDING_TRADE_OFFERS}). Дождитесь ответа или отклоните часть."
+
     data = {
         "from_user_id": from_user_id,
         "to_user_id": to_user_id,
@@ -559,7 +572,9 @@ def create_trade_offer(from_user_id, to_user_id, offered_card_id, wanted_card_id
         "status": "pending"
     }
     res = supabase.table("trade_offers").insert(data).execute()
-    return res.data[0]['id'] if res.data else None
+    if res.data:
+        return res.data[0]['id'], None
+    return None, "Ошибка создания обмена"
 
 
 def get_incoming_trades(user_id):
@@ -576,67 +591,116 @@ def get_outgoing_trades(user_id):
 
 def accept_trade(trade_id, user_id):
     """Принимает обмен — меняет карты между игроками"""
-    trade_res = supabase.table("trade_offers").select("*").eq("id", trade_id).eq("status", "pending").execute()
-    if not trade_res.data:
-        return False, "Обмен не найден"
-    trade = trade_res.data[0]
-    if trade['to_user_id'] != user_id:
-        return False, "Нет доступа"
+    # Атомарный клейм заявки (условие по status="pending" в самом UPDATE):
+    # если её уже обработали параллельным запросом/повторным кликом,
+    # rowcount будет 0 — не даём провести перевод карт дважды по одной заявке.
+    claim = supabase.table("trade_offers").update({"status": "accepted"}).eq(
+        "id", trade_id).eq("status", "pending").eq("to_user_id", user_id).execute()
+    if not claim.count:
+        return False, "Обмен не найден или уже обработан"
 
+    trade = supabase.table("trade_offers").select("*").eq("id", trade_id).execute().data[0]
     from_id = trade['from_user_id']
     to_id = trade['to_user_id']
     off_card = trade['offered_card_id']
     want_card = trade.get('wanted_card_id')
 
     # Перемещаем предложенную карту: from -> to
-    _transfer_card(from_id, to_id, off_card)
+    ok1 = _transfer_card(from_id, to_id, off_card)
+    if not ok1:
+        supabase.table("trade_offers").update({"status": "failed"}).eq("id", trade_id).execute()
+        return False, "У отправителя больше нет этой карты — обмен невозможен"
+
     # Перемещаем запрошенную карту: to -> from (если указана)
     if want_card:
-        _transfer_card(to_id, from_id, want_card)
+        ok2 = _transfer_card(to_id, from_id, want_card)
+        if not ok2:
+            # Откатываем уже переданную карту — обмен не должен завершиться наполовину
+            _transfer_card(to_id, from_id, off_card)
+            supabase.table("trade_offers").update({"status": "failed"}).eq("id", trade_id).execute()
+            return False, "У вас больше нет запрошенной карты — обмен невозможен"
 
-    supabase.table("trade_offers").update({"status": "accepted"}).eq("id", trade_id).execute()
     update_task_progress(user_id, "trade_complete", "weekly")
     return True, "Обмен выполнен!"
 
 
 def decline_trade(trade_id, user_id):
     """Отклоняет обмен"""
-    supabase.table("trade_offers").update({"status": "declined"}).eq("id", trade_id).eq("to_user_id", user_id).execute()
+    supabase.table("trade_offers").update({"status": "declined"}).eq(
+        "id", trade_id).eq("to_user_id", user_id).eq("status", "pending").execute()
 
 
 def _transfer_card(from_user_id, to_user_id, card_id):
-    """Внутренняя функция: перемещает 1 карту между пользователями"""
-    # Убираем у from_user
+    """Перемещает 1 карту между пользователями. Возвращает True, только если
+    карта реально была у отправителя и была атомарно списана.
+
+    Раньше, если у отправителя карты уже не было (например, её забрала ранее
+    принятая заявка), получатель всё равно получал карту — это позволяло
+    бесконечно дублировать её, приняв несколько заявок на обмен одной и той же
+    карты подряд (см. отчёт про дублирование через несколько сотен заявок).
+    Условие в WHERE ниже — атомарный "клейм", защищающий от такого же дубля
+    при параллельных/повторных запросах (двойной клик, автокликер)."""
     existing = supabase.table("user_cards").select("*").eq("user_id", from_user_id).eq("card_id", card_id).execute()
-    if existing.data:
-        row = existing.data[0]
-        if row['count'] > 1:
-            supabase.table("user_cards").update({"count": row['count'] - 1}).eq("id", row['id']).execute()
-        else:
-            supabase.table("user_cards").delete().eq("id", row['id']).execute()
-    # Добавляем to_user
+    if not existing.data or existing.data[0]['count'] < 1:
+        return False
+    row = existing.data[0]
+
+    if row['count'] > 1:
+        claim = supabase.table("user_cards").update({"count": row['count'] - 1}).eq(
+            "id", row['id']).eq("count", row['count']).execute()
+    else:
+        claim = supabase.table("user_cards").delete().eq("id", row['id']).execute()
+
+    if not claim.count:
+        return False
+
+    if row['count'] <= 1:
+        # Отдали последнюю копию — освобождаем слот в отряде на арене, если она
+        # там стояла. Иначе карты у игрока уже нет, а слот всё ещё "занят".
+        _remove_from_squad(from_user_id, card_id)
+
     add_card_to_user(to_user_id, card_id)
+    return True
+
+
+def _remove_from_squad(user_id, card_id):
+    """Убирает карту из боевого отряда, если она там есть. Вызывается, когда
+    у игрока не осталось ни одной копии карты (отдал в обмене/продал на
+    площадке) — иначе слот в отряде остаётся занят несуществующей у него картой."""
+    supabase.table("user_squads").delete().eq("user_id", user_id).eq("card_id", card_id).execute()
 
 
 # --- ТОРГОВАЯ ПЛОЩАДКА ---
 
 def list_card_on_market(user_id, card_id, price):
     """Выставляет карту на продажу"""
-    # Проверяем, что карта есть у пользователя
     existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
     if not existing.data or existing.data[0]['count'] < 1:
         return False, "У вас нет этой карты"
-    # Создаём листинг
+    row = existing.data[0]
+
+    # Резервируем карту АТОМАРНО (клейм по count, который только что прочитали)
+    # ДО создания листинга — иначе двойной клик/автокликер мог бы выставить
+    # на продажу больше копий карты, чем реально есть.
+    if row['count'] > 1:
+        claim = supabase.table("user_cards").update({"count": row['count'] - 1}).eq(
+            "id", row['id']).eq("count", row['count']).execute()
+    else:
+        claim = supabase.table("user_cards").delete().eq("id", row['id']).execute()
+    if not claim.count:
+        return False, "У вас нет этой карты"
+
+    if row['count'] <= 1:
+        # Выставили последнюю копию — освобождаем слот в отряде, если она там стояла
+        _remove_from_squad(user_id, card_id)
+
     data = {"seller_id": user_id, "card_id": card_id, "price": price, "status": "active"}
     res = supabase.table("market_listings").insert(data).execute()
     if res.data:
-        # Резервируем карту (убираем 1 штуку)
-        row = existing.data[0]
-        if row['count'] > 1:
-            supabase.table("user_cards").update({"count": row['count'] - 1}).eq("id", row['id']).execute()
-        else:
-            supabase.table("user_cards").delete().eq("id", row['id']).execute()
         return True, res.data[0]['id']
+
+    # Листинг не создался — возвращаем зарезервированную карту обратно
+    add_card_to_user(user_id, card_id)
     return False, "Ошибка создания листинга"
 
 
@@ -667,6 +731,14 @@ def buy_from_market(buyer_id, listing_id):
     if not buyer or buyer['coins'] < price:
         return False, "Недостаточно монет"
 
+    # Атомарный клейм листинга ДО начисления денег/карты: если его уже купили
+    # или сняли между select выше и этим update (двойной клик, два покупателя
+    # одновременно) — rowcount будет 0, и мы не продублируем карту/деньги.
+    claim = supabase.table("market_listings").update({"status": "sold"}).eq(
+        "id", listing_id).eq("status", "active").execute()
+    if not claim.count:
+        return False, "Этот листинг уже куплен или снят с продажи"
+
     fee = max(1, price * MARKET_FEE_PERCENT // 100)
     seller_gets = price - fee
 
@@ -680,9 +752,6 @@ def buy_from_market(buyer_id, listing_id):
 
     # Выдаём карту покупателю
     add_card_to_user(buyer_id, listing['card_id'])
-
-    # Закрываем листинг
-    supabase.table("market_listings").update({"status": "sold"}).eq("id", listing_id).execute()
     return True, "Покупка успешна!"
 
 
@@ -692,15 +761,27 @@ def cancel_market_listing(user_id, listing_id):
     if not listing_res.data:
         return False, "Листинг не найден"
     listing = listing_res.data[0]
-    supabase.table("market_listings").update({"status": "cancelled"}).eq("id", listing_id).execute()
+
+    # Атомарный клейм — та же защита, что и в buy_from_market
+    claim = supabase.table("market_listings").update({"status": "cancelled"}).eq(
+        "id", listing_id).eq("status", "active").execute()
+    if not claim.count:
+        return False, "Этот листинг уже куплен или снят с продажи"
+
     add_card_to_user(user_id, listing['card_id'])
     return True, "Карта возвращена"
 
 
 def get_my_market_listings(user_id):
     """Получает активные листинги пользователя"""
-    res = supabase.table("market_listings").select("*, cards(*)").eq("seller_id", user_id).eq("status", "active").execute()
-    return res.data or []
+    res = supabase.table("market_listings").select("*").eq("seller_id", user_id).eq("status", "active").execute()
+    listings = res.data or []
+    if not listings:
+        return []
+    cards_by_id = {c['id']: c for c in (get_all_cards() or [])}
+    for listing in listings:
+        listing['cards'] = cards_by_id.get(listing['card_id'], {})
+    return listings
 
 
 # --- СОБЫТИЯ ---
@@ -720,17 +801,19 @@ def get_user_stats_for_achievements(user_id):
     if not user:
         return {}
 
-    # Считаем уникальные карты
-    cards_res = supabase.table("user_cards").select("card_id, cards(rarity)", count="exact").eq("user_id", user_id).execute()
+    # Считаем уникальные карты и по редкостям — джойн делаем вручную в Python
+    # (мок supabase поверх sqlite не поддерживает произвольные embedded-select
+    # вида cards(rarity), только несколько захардкоженных cards(*) веток)
+    cards_res = supabase.table("user_cards").select("card_id", count="exact").eq("user_id", user_id).execute()
     unique_cards = cards_res.count or 0
+    rarity_by_id = {c['id']: c.get('rarity') for c in (get_all_cards() or [])}
 
-    # Считаем по редкостям
     legendary_count = 0
     mythic_count = 0
     divine_count = 0
     secret_count = 0
     for item in (cards_res.data or []):
-        rarity = item.get('cards', {}).get('rarity', '')
+        rarity = rarity_by_id.get(item['card_id'], '')
         if rarity == 'Legendary': legendary_count += 1
         elif rarity == 'Mythic': mythic_count += 1
         elif rarity == 'Divine': divine_count += 1
@@ -771,7 +854,14 @@ def fuse_cards(user_id, card_id, count_required=3):
     new_count = row['count'] - count_required
     current_level = row.get('card_level', 1) or 1
     new_level = current_level + 1
-    supabase.table("user_cards").update({"count": new_count, "card_level": new_level}).eq("id", row['id']).execute()
+
+    # Атомарный клейм по count, который только что прочитали — иначе двойной
+    # клик/автокликер мог бы улучшить карту дважды за одни и те же копии
+    # (списались бы одни и те же 3 копии, но уровень вырос бы на 2).
+    claim = supabase.table("user_cards").update({"count": new_count, "card_level": new_level}).eq(
+        "id", row['id']).eq("count", row['count']).execute()
+    if not claim.count:
+        return False, "Не удалось улучшить — попробуйте ещё раз"
     return True, new_level
 
 
@@ -1066,28 +1156,6 @@ def do_farm_coins(user_id):
 
 # --- РЕЙТИНГ АРЕНЫ ПО УРОНУ ---
 
-def update_battle_stats_with_damage(winner_id, loser_id, winner_damage, loser_damage):
-    """Обновляет статистику боя с учётом нанесённого урона. Награда победителю: 10 монет."""
-    w = supabase.table("users").select("coins, rating, battles_won, battles_total, total_damage_dealt").eq(
-        "telegram_id", winner_id).execute().data[0]
-    supabase.table("users").update({
-        "coins": w['coins'] + 10,  # Награда: 10 монет
-        "rating": w['rating'] + 25,
-        "battles_won": w['battles_won'] + 1,
-        "battles_total": w['battles_total'] + 1,
-        "total_damage_dealt": (w.get('total_damage_dealt') or 0) + winner_damage,
-    }).eq("telegram_id", winner_id).execute()
-
-    l = supabase.table("users").select("rating, battles_total, total_damage_dealt").eq(
-        "telegram_id", loser_id).execute().data[0]
-    new_rating = max(0, l['rating'] - 15)
-    supabase.table("users").update({
-        "rating": new_rating,
-        "battles_total": l['battles_total'] + 1,
-        "total_damage_dealt": (l.get('total_damage_dealt') or 0) + loser_damage,
-    }).eq("telegram_id", loser_id).execute()
-
-
 def get_top_by_damage(limit=10):
     """Топ игроков по суммарному нанесённому урону"""
     res = supabase.table("users").select("first_name, total_damage_dealt").order(
@@ -1195,6 +1263,108 @@ def get_all_clans_list(page=0, page_size=8):
     return result, total
 
 
+# --- КЛАНОВЫЕ ВОЙНЫ ---
+
+def get_clan_war_status(clan_id):
+    """Проверяет, доступна ли война для клана (общий кулдаун — и как атакующий,
+    и как цель, чтобы клан нельзя было закликать войнами без передышки).
+    Возвращает (available: bool, seconds_left: int)"""
+    from config import CLAN_WAR_COOLDOWN_HOURS
+    clan = get_clan_info(clan_id)
+    if not clan:
+        return False, 0
+    last_war = clan.get('last_war_at')
+    if not last_war:
+        return True, 0
+    now = datetime.now(timezone.utc)
+    last = datetime.fromisoformat(last_war.replace('Z', '+00:00'))
+    diff = now - last
+    cooldown = timedelta(hours=CLAN_WAR_COOLDOWN_HOURS)
+    if diff >= cooldown:
+        return True, 0
+    return False, int((cooldown - diff).total_seconds())
+
+
+def get_clans_for_war(exclude_clan_id, page=0, page_size=8):
+    """Список кланов-целей для объявления войны (кроме своего)"""
+    start = page * page_size
+    end = start + page_size - 1
+
+    count_res = supabase.table("clans").select("id", count="exact").neq("id", exclude_clan_id).execute()
+    total = count_res.count or 0
+
+    res = supabase.table("clans").select("id, name, owner_id, coins, war_wins").neq(
+        "id", exclude_clan_id).order("id").range(start, end).execute()
+    clans = res.data or []
+    for clan in clans:
+        mem_res = supabase.table("clan_members").select("user_id", count="exact").eq("clan_id", clan['id']).execute()
+        clan['members_count'] = mem_res.count or 0
+    return clans, total
+
+
+def start_clan_war(challenger_clan_id, target_clan_id):
+    """Проверяет условия и списывает ставку с обоих лидеров лично (не из казны —
+    иначе только что созданный клан с пустой казной не смог бы воевать вообще).
+    Возвращает (success, message, challenger_id, target_id, challenger_clan, target_clan)"""
+    from config import CLAN_WAR_STAKE
+
+    if challenger_clan_id == target_clan_id:
+        return False, "Нельзя воевать со своим кланом", None, None, None, None
+
+    challenger_clan = get_clan_info(challenger_clan_id)
+    target_clan = get_clan_info(target_clan_id)
+    if not challenger_clan or not target_clan:
+        return False, "Клан не найден", None, None, None, None
+
+    can_attack, _ = get_clan_war_status(challenger_clan_id)
+    if not can_attack:
+        return False, "Ваш клан ещё не отдохнул после последней войны", None, None, None, None
+
+    can_defend, _ = get_clan_war_status(target_clan_id)
+    if not can_defend:
+        return False, "Этот клан недавно уже воевал — сейчас его нельзя атаковать", None, None, None, None
+
+    challenger_id = challenger_clan['owner_id']
+    target_id = target_clan['owner_id']
+
+    if not update_coins(challenger_id, -CLAN_WAR_STAKE):
+        return False, f"Недостаточно личных монет на ставку ({CLAN_WAR_STAKE} 💰)", None, None, None, None
+    if not update_coins(target_id, -CLAN_WAR_STAKE):
+        update_coins(challenger_id, CLAN_WAR_STAKE)  # возвращаем ставку — война не состоялась
+        return False, "У лидера клана-цели недостаточно личных монет на ставку", None, None, None, None
+
+    return True, "ok", challenger_id, target_id, challenger_clan, target_clan
+
+
+def apply_clan_war_result(winner_clan_id, loser_clan_id):
+    """Зачисляет в казну победителя обе ставки + системный бонус, ставит
+    кулдаун обоим кланам и увеличивает счётчик побед в войнах"""
+    from config import CLAN_WAR_STAKE, CLAN_WAR_BONUS
+    now = datetime.now(timezone.utc).isoformat()
+
+    winner = get_clan_info(winner_clan_id)
+    if winner:
+        supabase.table("clans").update({
+            "coins": (winner.get('coins') or 0) + CLAN_WAR_STAKE * 2 + CLAN_WAR_BONUS,
+            "war_wins": (winner.get('war_wins') or 0) + 1,
+            "last_war_at": now,
+        }).eq("id", winner_clan_id).execute()
+
+    supabase.table("clans").update({"last_war_at": now}).eq("id", loser_clan_id).execute()
+
+
+def get_top_clans_by_treasury(limit=10):
+    """Топ кланов по казне"""
+    res = supabase.table("clans").select("name, coins").order("coins", desc=True).limit(limit).execute()
+    return res.data or []
+
+
+def get_top_clans_by_war_wins(limit=10):
+    """Топ кланов по победам в клановых войнах"""
+    res = supabase.table("clans").select("name, war_wins").order("war_wins", desc=True).limit(limit).execute()
+    return res.data or []
+
+
 # --- ЗАЯВКИ В КЛАНЫ ---
 
 def request_join_clan(user_id, clan_id):
@@ -1219,9 +1389,17 @@ def request_join_clan(user_id, clan_id):
 
 def get_pending_clan_requests(clan_id):
     """Получает список ожидающих заявок для лидера"""
-    res = supabase.table("clan_join_requests").select("id, user_id, users(first_name, username)").eq(
+    # Джойн с users делаем вручную: мок supabase поверх sqlite ломается на
+    # embedded-select с запятой внутри скобок вроде users(first_name, username) —
+    # наивный split(",") режет прямо по этой внутренней запятой и превращает
+    # запрос в синтаксически неверный SQL (крашится при просмотре заявок).
+    res = supabase.table("clan_join_requests").select("id, user_id").eq(
         "clan_id", clan_id).eq("status", "pending").execute()
-    return res.data or []
+    requests = res.data or []
+    for req in requests:
+        u = get_user_data(req['user_id'])
+        req['users'] = {"first_name": u['first_name'], "username": u.get('username')} if u else {}
+    return requests
 
 
 def accept_clan_request(request_id, leader_id):

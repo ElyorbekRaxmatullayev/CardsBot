@@ -10,6 +10,8 @@ from utils import safe_edit_message, safe_send_message, register_next_step_handl
 # Временное хранилище для выбранных карт при создании обмена
 _trade_state = {}  # user_id -> {'step': ..., 'card_id': ..., 'target_id': ...}
 
+TRADE_PAGE_SIZE = 10
+
 
 # --- ГЛАВНОЕ МЕНЮ ОБМЕНА ---
 
@@ -39,10 +41,29 @@ def trade_menu(call):
 
 # --- ВХОДЯЩИЕ ---
 
-@bot.callback_query_handler(func=lambda call: call.data == "trade_incoming")
+def _paginate(items, page):
+    total = len(items)
+    max_page = max(0, (total - 1) // TRADE_PAGE_SIZE)
+    page = max(0, min(page, max_page))
+    start = page * TRADE_PAGE_SIZE
+    return items[start:start + TRADE_PAGE_SIZE], page, max_page, total
+
+
+def _page_nav_row(callback_prefix, page, max_page):
+    nav = []
+    if page > 0:
+        nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"{callback_prefix}:{page - 1}"))
+    nav.append(types.InlineKeyboardButton(f"{page + 1}/{max_page + 1}", callback_data="ignore"))
+    if page < max_page:
+        nav.append(types.InlineKeyboardButton("➡️", callback_data=f"{callback_prefix}:{page + 1}"))
+    return nav
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "trade_incoming" or call.data.startswith("trade_incoming:"))
 def trade_incoming(call):
     bot.answer_callback_query(call.id)
     user_id = call.from_user.id
+    page = int(call.data.split(":")[1]) if ":" in call.data else 0
     offers = get_incoming_trades(user_id)
 
     if not offers:
@@ -53,18 +74,22 @@ def trade_incoming(call):
                           txt, reply_markup=markup, parse_mode="HTML")
         return
 
-    txt = "📬 <b>Входящие предложения обмена:</b>\n➖➖➖➖➖➖➖➖\n\n"
+    page_items, page, max_page, total = _paginate(offers, page)
+
+    txt = (f"📬 <b>Входящие предложения обмена</b> (всего: {total})\n"
+           f"➖➖➖➖➖➖➖➖\n\n")
     markup = types.InlineKeyboardMarkup()
-    for offer in offers:
+    for offer in page_items:
         card = offer.get('cards') or {}
         from_name = (offer.get('users') or {}).get('first_name', 'Неизвестно')
         emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
         txt += f"От: <b>{from_name}</b>\nКарта: {emoji} <b>{card.get('name', '?')}</b>\n\n"
         markup.row(
-            types.InlineKeyboardButton(f"✅ Принять #{offer['id']}", callback_data=f"trade_accept:{offer['id']}"),
-            types.InlineKeyboardButton(f"❌ Отклонить", callback_data=f"trade_decline:{offer['id']}"),
+            types.InlineKeyboardButton(f"✅ Принять #{offer['id']}", callback_data=f"trade_accept:{offer['id']}:{page}"),
+            types.InlineKeyboardButton(f"❌ Отклонить", callback_data=f"trade_decline:{offer['id']}:{page}"),
         )
 
+    markup.row(*_page_nav_row("trade_incoming", page, max_page))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_trade"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       txt, reply_markup=markup, parse_mode="HTML")
@@ -72,23 +97,27 @@ def trade_incoming(call):
 
 # --- ИСХОДЯЩИЕ ---
 
-@bot.callback_query_handler(func=lambda call: call.data == "trade_outgoing")
+@bot.callback_query_handler(func=lambda call: call.data == "trade_outgoing" or call.data.startswith("trade_outgoing:"))
 def trade_outgoing(call):
     bot.answer_callback_query(call.id)
     user_id = call.from_user.id
+    page = int(call.data.split(":")[1]) if ":" in call.data else 0
     offers = get_outgoing_trades(user_id)
 
+    markup = types.InlineKeyboardMarkup()
     if not offers:
         txt = "📤 <b>Исходящие предложения</b>\n\nУ вас нет исходящих предложений."
     else:
-        txt = "📤 <b>Ваши предложения обмена:</b>\n➖➖➖➖➖➖➖➖\n\n"
-        for offer in offers:
+        page_items, page, max_page, total = _paginate(offers, page)
+        txt = (f"📤 <b>Ваши предложения обмена</b> (всего: {total})\n"
+               f"➖➖➖➖➖➖➖➖\n\n")
+        for offer in page_items:
             card = offer.get('cards') or {}
             to_name = (offer.get('users') or {}).get('first_name', 'Неизвестно')
             emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
             txt += f"Кому: <b>{to_name}</b>\nКарта: {emoji} <b>{card.get('name', '?')}</b>\nСтатус: ⏳ Ожидание\n\n"
+        markup.row(*_page_nav_row("trade_outgoing", page, max_page))
 
-    markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_trade"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       txt, reply_markup=markup, parse_mode="HTML")
@@ -98,19 +127,25 @@ def trade_outgoing(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trade_accept:"))
 def trade_accept(call):
-    trade_id = int(call.data.split(":")[1])
+    parts = call.data.split(":")
+    trade_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
     user_id = call.from_user.id
     success, msg = accept_trade(trade_id, user_id)
     bot.answer_callback_query(call.id, msg, show_alert=True)
+    call.data = f"trade_incoming:{page}"
     trade_incoming(call)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trade_decline:"))
 def trade_decline_cb(call):
-    trade_id = int(call.data.split(":")[1])
+    parts = call.data.split(":")
+    trade_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
     user_id = call.from_user.id
     decline_trade(trade_id, user_id)
     bot.answer_callback_query(call.id, "❌ Предложение отклонено")
+    call.data = f"trade_incoming:{page}"
     trade_incoming(call)
 
 
@@ -201,7 +236,7 @@ def trade_select_card(call):
     target_id = int(parts[2])
     user_id = call.from_user.id
 
-    trade_id = create_trade_offer(user_id, target_id, card_id)
+    trade_id, err = create_trade_offer(user_id, target_id, card_id)
     if trade_id:
         bot.answer_callback_query(call.id, "✅ Предложение отправлено!", show_alert=True)
         # Уведомляем получателя
@@ -214,7 +249,7 @@ def trade_select_card(call):
         except:
             pass
     else:
-        bot.answer_callback_query(call.id, "❌ Ошибка создания обмена", show_alert=True)
+        bot.answer_callback_query(call.id, err or "❌ Ошибка создания обмена", show_alert=True)
 
     _trade_state.pop(user_id, None)
     trade_menu(call)

@@ -8,3 +8,4 @@ __pycache__/
 .idea
 handlers/__pycache__/
 .claude
+cardsbot.db

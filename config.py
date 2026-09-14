@@ -4,8 +4,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 RARITY_CONFIG = {
@@ -261,10 +259,20 @@ DROP_COOLDOWN_PREMIUM = 1.5  # 1 час 30 минут
 FARM_COOLDOWN_HOURS = 4      # Кулдаун фарма монет
 FARM_MAX_COINS = 100         # Максимум монет за фарм
 MARKET_FEE_PERCENT = 5       # комиссия торговой площадки %
+MAX_PENDING_TRADE_OFFERS = 20  # лимит одновременных исходящих заявок на обмен у одного игрока
 
 # --- УЛУЧШЕНИЕ КАРТ (FUSION) ---
 FUSE_REQUIRED_COPIES = 3       # сколько дублей нужно слить для +1 уровня
 FUSE_LEVEL_BONUS_PERCENT = 20  # бонус к atk/hp за каждый уровень выше 1
+
+# --- КЛАНОВЫЕ ВОЙНЫ ---
+# Ставку платит лично лидер (из своих монет, не из казны — иначе только что
+# созданный клан с пустой казной не смог бы воевать вообще). Победа зачисляет
+# в казну победителя обе ставки + системный бонус — так казна реально растёт,
+# а не просто "переливается" между кланами.
+CLAN_WAR_STAKE = 250           # ставка с каждого лидера (личные монеты)
+CLAN_WAR_BONUS = 150           # системный бонус в казну победителя сверх ставок
+CLAN_WAR_COOLDOWN_HOURS = 6    # кулдаун на клан между войнами (и как атакующий, и как цель)
 
 # --- ДУНХУА ---
 DUNHUA_LIST = [

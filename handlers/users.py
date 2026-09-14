@@ -7,7 +7,7 @@ from database import (get_or_create_user, get_user_data, get_top_by_coins,
                       check_daily_bonus, set_daily_bonus_taken,
                       add_card_to_user, get_all_cards, get_user_gems, get_user_rank,
                       get_top_by_damage, check_farm_available, do_farm_coins,
-                      get_user_marriage)
+                      get_user_marriage, get_top_clans_by_treasury, get_top_clans_by_war_wins)
 from database import is_premium, get_clan_name, is_user_banned, update_task_progress, on_card_obtained
 from loader import bot
 from utils import safe_send_message, safe_edit_message
@@ -72,6 +72,8 @@ def get_rating_markup():
         types.InlineKeyboardButton("🃏 По кол-ву карт", callback_data="top_count"),
         types.InlineKeyboardButton("💎 По ценности", callback_data="top_value"),
         types.InlineKeyboardButton("⚔️ По урону (Арена)", callback_data="top_damage"),
+        types.InlineKeyboardButton("🏰 Казна клана", callback_data="top_treasury"),
+        types.InlineKeyboardButton("🏰 Победы в войнах", callback_data="top_warwins"),
         types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu")
     )
     return markup
@@ -285,6 +287,14 @@ def show_top(call):
         data = get_top_by_damage()
         metric, field = "⚔️", "value"
         txt = "⚔️ <b>Топ по урону (Арена)</b>\n\n"
+    elif category == "treasury":
+        data = get_top_clans_by_treasury()
+        metric, field = "💰", "coins"
+        txt = "🏰 <b>Топ кланов по казне</b>\n\n"
+    elif category == "warwins":
+        data = get_top_clans_by_war_wins()
+        metric, field = "🏆", "war_wins"
+        txt = "🏰 <b>Топ кланов по победам в войнах</b>\n\n"
     else:
         data = get_top_by_coins()
         metric, field = "💰", "coins"
@@ -295,8 +305,10 @@ def show_top(call):
     else:
         for i, u in enumerate(data):
             val = u.get(field, 0)
+            # Клановые категории отдают {"name": ...}, а не {"first_name": ...}
+            label = u.get('first_name') or u.get('name', '?')
             medal = medals[i] if i < 3 else f"{i + 1}."
-            txt += f"{medal} <b>{u['first_name']}</b> — {val} {metric}\n"
+            txt += f"{medal} <b>{label}</b> — {val} {metric}\n"
 
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
                       reply_markup=get_rating_markup(), parse_mode="HTML")
