@@ -16,7 +16,12 @@ def get_or_create_user(user_id, username, first_name, referrer_id=None):
             "username": username,
             "first_name": first_name,
             "referrer_id": referrer_id,
-            "coins": 100
+            "coins": 100,
+            # 5 бесплатных получений карты (обходят кулдаун "Получить карту")
+            # выдаются один раз навсегда на аккаунт — именно здесь, при первой
+            # вставке строки, а не через DEFAULT в схеме, чтобы миграция
+            # столбца на проде не выдала их задним числом всем существующим
+            "free_draws_remaining": 5,
         }
         try:
             supabase.table("users").insert(data).execute()
@@ -93,6 +98,20 @@ def on_card_obtained(user_id, card, is_dup):
 
 def update_last_drop(user_id, timestamp):
     supabase.table("users").update({"last_timed_drop": timestamp}).eq("telegram_id", user_id).execute()
+
+
+def consume_free_draw(user_id):
+    """Атомарно тратит одно из стартовых бесплатных получений карты (обходит
+    кулдаун). Возвращает True, если получение было доступно и списано."""
+    user = get_user_data(user_id)
+    if not user:
+        return False
+    remaining = user.get('free_draws_remaining') or 0
+    if remaining <= 0:
+        return False
+    claim = supabase.table("users").update({"free_draws_remaining": remaining - 1}).eq(
+        "telegram_id", user_id).eq("free_draws_remaining", remaining).execute()
+    return bool(claim.count)
 
 
 def get_top_users(limit=10):
@@ -463,12 +482,25 @@ def use_pack(user_id, pack_type):
     return True
 
 
-def increment_packs_opened(user_id):
+def use_all_packs(user_id, pack_type):
+    """Атомарно забирает СРАЗУ ВСЕ паки данного типа (кнопка «Открыть всё»).
+    Клейм по прочитанному count — двойное нажатие не откроет одни и те же
+    паки дважды. Возвращает, сколько паков забрано (0, если их не было)."""
+    existing = supabase.table("user_packs").select("*").eq("user_id", user_id).eq("pack_type", pack_type).execute()
+    if not existing.data or existing.data[0]['count'] < 1:
+        return 0
+    row = existing.data[0]
+    old_count = row['count']
+    claim = supabase.table("user_packs").update({"count": 0}).eq("id", row['id']).eq("count", old_count).execute()
+    return old_count if claim.count else 0
+
+
+def increment_packs_opened(user_id, count=1):
     """Увеличивает счётчик открытых паков"""
     user = get_user_data(user_id)
     if not user:
         return
-    new_val = (user.get('packs_opened') or 0) + 1
+    new_val = (user.get('packs_opened') or 0) + count
     supabase.table("users").update({"packs_opened": new_val}).eq("telegram_id", user_id).execute()
 
 
@@ -924,6 +956,12 @@ def get_all_users_count():
     return res.count or 0
 
 
+def get_all_user_ids():
+    """Все telegram_id пользователей — для рассылки"""
+    res = supabase.table("users").select("telegram_id").execute()
+    return [row['telegram_id'] for row in (res.data or [])]
+
+
 # --- АДМИНЫ ---
 
 def get_admin_ids():
@@ -1220,7 +1258,8 @@ def accept_marriage(marriage_id, user_id):
     res = supabase.table("marriages").select("*").eq("id", marriage_id).eq("user2_id", user_id).eq("status", "pending").execute()
     if not res.data:
         return False, "Заявка не найдена"
-    supabase.table("marriages").update({"status": "active"}).eq("id", marriage_id).execute()
+    now = datetime.now(timezone.utc).isoformat()
+    supabase.table("marriages").update({"status": "active", "married_at": now}).eq("id", marriage_id).execute()
     return True, "ok"
 
 
@@ -1239,8 +1278,23 @@ def divorce(user_id):
     return True
 
 
-def get_all_marriages(page=0, page_size=10):
-    """Список действующих браков с пагинацией — для админки"""
+def get_all_marriages(page=0, page_size=10, username_query=None):
+    """Список действующих браков с пагинацией — для админки.
+    С username_query фильтрует по подстроке в @username ИЛИ имени любого из
+    партнёров (фильтруем в Python — искать по колонке присоединённой через
+    алиас u1/u2 средствами QueryBuilder.or_ нельзя, он умеет только eq)."""
+    if username_query:
+        q = username_query.strip().lstrip('@').lower()
+        res = supabase.table("marriages").select("*").eq("status", "active").order("id", desc=True).execute()
+        matched = []
+        for m in (res.data or []):
+            u1, u2 = m.get('u1') or {}, m.get('u2') or {}
+            haystacks = [u1.get('username'), u1.get('first_name'), u2.get('username'), u2.get('first_name')]
+            if any(q in (h or '').lower() for h in haystacks):
+                matched.append(m)
+        start = page * page_size
+        return matched[start:start + page_size], len(matched)
+
     start = page * page_size
     end = start + page_size - 1
 
@@ -1250,6 +1304,14 @@ def get_all_marriages(page=0, page_size=10):
     res = supabase.table("marriages").select("*").eq("status", "active").order(
         "id", desc=True).range(start, end).execute()
     return res.data or [], total
+
+
+def admin_divorce_marriage(marriage_id):
+    """Принудительно расторгает брак из админки. Возвращает True, если брак
+    был найден активным и расторгнут."""
+    claim = supabase.table("marriages").update({"status": "divorced"}).eq(
+        "id", marriage_id).eq("status", "active").execute()
+    return bool(claim.count)
 
 
 def find_user_by_username(username):

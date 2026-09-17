@@ -31,6 +31,13 @@ EXTRA_COLUMNS = {
     ],
     "users": [
         ("last_clan_withdraw", "TIMESTAMP"),
+        # DEFAULT 0, а не 5 — этот бонус даётся явно в коде при создании
+        # НОВОГО игрока (get_or_create_user), а не задним числом всем, кто
+        # уже играет; иначе миграция раздала бы бесплатные карты всем подряд
+        ("free_draws_remaining", "INTEGER DEFAULT 0"),
+    ],
+    "marriages": [
+        ("married_at", "TIMESTAMP"),
     ],
 }
 
@@ -101,6 +108,13 @@ def cleanup_ghost_records(conn, cur):
         WHERE status='pending' AND offered_card_id NOT IN (SELECT id FROM cards)
     """)
     report["заявки на обмен удалённой картой"] = cur.rowcount
+
+    # married_at — новая колонка, у уже действующих браков её ещё нет. Раньше
+    # момента свадьбы (принятия заявки) отдельно не фиксировали — используем
+    # created_at (дата заявки) как разумное приближение, чтобы "Вместе: X дней"
+    # в админке не показывал пустоту для браков, заключённых до этого фикса.
+    cur.execute("UPDATE marriages SET married_at = created_at WHERE status='active' AND married_at IS NULL")
+    report["браки без даты свадьбы (проставлена по дате заявки)"] = cur.rowcount
 
     conn.commit()
     return report

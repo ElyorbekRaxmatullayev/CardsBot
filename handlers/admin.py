@@ -1,3 +1,5 @@
+import threading
+import time
 from datetime import datetime, timezone
 
 from telebot import types
@@ -9,7 +11,7 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       search_users, set_user_banned, get_public_profile,
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
-                      toggle_channel_mandatory, get_all_marriages)
+                      toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids)
 from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
@@ -62,6 +64,7 @@ def admin_start(message, user_id=None):
     )
     markup.row(
         types.InlineKeyboardButton("💍 Браки", callback_data="adm_marriages:0"),
+        types.InlineKeyboardButton("📣 Рассылка", callback_data="adm_broadcast"),
     )
     row = [types.InlineKeyboardButton("📢 Каналы", callback_data="adm_channels")]
     if is_head_admin(user_id):
@@ -96,33 +99,52 @@ def adm_stats(call):
 
 
 MARRIAGES_PAGE_SIZE = 10
+_marriage_search = {}  # admin_id -> текущий поисковый запрос (или None)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_marriages:"))
-def adm_marriages_list(call):
-    if not is_admin(call.from_user.id):
-        return
-    bot.answer_callback_query(call.id)
-    page = int(call.data.split(":")[1])
+def _marriage_user_disp(u):
+    u = u or {}
+    username = u.get('username')
+    return f"@{username}" if username else (u.get('first_name') or '?')
 
-    marriages, total = get_all_marriages(page, MARRIAGES_PAGE_SIZE)
+
+def _marriage_duration_txt(m):
+    ts = m.get('married_at') or m.get('created_at')
+    if not ts:
+        return "?"
+    try:
+        started = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    except ValueError:
+        return "?"
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    diff = datetime.now(timezone.utc) - started
+    days = diff.days
+    hours = diff.seconds // 3600
+    return f"{days} дней, {hours} часов"
+
+
+def _render_marriages_list(chat_id, message_id, admin_id, page):
+    query = _marriage_search.get(admin_id)
+    marriages, total = get_all_marriages(page, MARRIAGES_PAGE_SIZE, username_query=query)
     max_page = max(0, (total - 1) // MARRIAGES_PAGE_SIZE)
 
-    txt = f"💍 <b>Зарегистрированные браки</b> (всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
+    header = f"🔍 по запросу «{query}» " if query else ""
+    txt = f"💍 <b>Зарегистрированные браки</b> {header}(всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+
     if not marriages:
-        txt += "Пока нет ни одного брака."
+        txt += "Ничего не найдено." if query else "Пока нет ни одного брака."
     else:
         for m in marriages:
-            u1_name = m.get('u1', {}).get('first_name') or '?'
-            u1_username = m.get('u1', {}).get('username')
-            u2_name = m.get('u2', {}).get('first_name') or '?'
-            u2_username = m.get('u2', {}).get('username')
-            u1_disp = f"@{u1_username}" if u1_username else u1_name
-            u2_disp = f"@{u2_username}" if u2_username else u2_name
-            txt += (f"❤️ <b>{u1_disp}</b> ({m['user1_id']}) + "
-                    f"<b>{u2_disp}</b> ({m['user2_id']})\n")
+            u1_disp = _marriage_user_disp(m.get('u1'))
+            u2_disp = _marriage_user_disp(m.get('u2'))
+            txt += f"❤️ <b>{u1_disp} + {u2_disp}</b> — Вместе: {_marriage_duration_txt(m)}\n"
+            markup.add(types.InlineKeyboardButton(
+                f"💔 Расторгнуть {u1_disp} + {u2_disp}",
+                callback_data=f"adm_marriage_confirm:{m['id']}:{page}"
+            ))
 
-    markup = types.InlineKeyboardMarkup()
     nav = []
     if page > 0:
         nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"adm_marriages:{page - 1}"))
@@ -131,9 +153,76 @@ def adm_marriages_list(call):
         nav.append(types.InlineKeyboardButton("➡️", callback_data=f"adm_marriages:{page + 1}"))
     if len(nav) > 1:
         markup.row(*nav)
+
+    search_row = [types.InlineKeyboardButton("🔍 Поиск по @username", callback_data="adm_marriage_search")]
+    if query:
+        search_row.append(types.InlineKeyboardButton("❌ Сбросить поиск", callback_data="adm_marriage_search_clear"))
+    markup.row(*search_row)
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="adm_back"))
-    safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
-                      reply_markup=markup, parse_mode="HTML")
+    safe_edit_message(bot, chat_id, message_id, txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_marriages:"))
+def adm_marriages_list(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    page = int(call.data.split(":")[1])
+    _render_marriages_list(call.message.chat.id, call.message.message_id, call.from_user.id, page)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_marriage_search")
+def adm_marriage_search_start(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id,
+                           "🔍 Введите @username (или часть имени) одного из партнёров:\n\n(Отмена — /cancel)")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _marriage_search_step)
+
+
+def _marriage_search_step(message):
+    admin_id = message.from_user.id
+    if message.text == '/cancel':
+        bot.send_message(message.chat.id, "Отменено.")
+        return
+    _marriage_search[admin_id] = message.text.strip()
+    msg = bot.send_message(message.chat.id, "💍 Результаты поиска:")
+    _render_marriages_list(message.chat.id, msg.message_id, admin_id, 0)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_marriage_search_clear")
+def adm_marriage_search_clear(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id, "Поиск сброшен")
+    _marriage_search.pop(call.from_user.id, None)
+    _render_marriages_list(call.message.chat.id, call.message.message_id, call.from_user.id, 0)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_marriage_confirm:"))
+def adm_marriage_confirm(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    _, marriage_id, page = call.data.split(":")
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("✅ Да, расторгнуть", callback_data=f"adm_marriage_do:{marriage_id}:{page}"),
+        types.InlineKeyboardButton("❌ Отмена", callback_data=f"adm_marriages:{page}"),
+    )
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
+                      "⚠️ Расторгнуть этот брак принудительно?", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_marriage_do:"))
+def adm_marriage_do(call):
+    if not is_admin(call.from_user.id):
+        return
+    _, marriage_id, page = call.data.split(":")
+    ok = admin_divorce_marriage(int(marriage_id))
+    bot.answer_callback_query(call.id, "✅ Брак расторгнут" if ok else "❌ Брак уже не активен", show_alert=True)
+    _render_marriages_list(call.message.chat.id, call.message.message_id, call.from_user.id, int(page))
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "adm_back")
@@ -916,3 +1005,92 @@ def adm_channel_del(call):
     delete_required_channel(channel_id)
     bot.answer_callback_query(call.id, "🗑 Канал удалён", show_alert=True)
     adm_channels_menu(call)
+
+
+# --- РАССЫЛКА ВСЕМ ПОЛЬЗОВАТЕЛЯМ ---
+
+_broadcast_pending = {}  # admin_id -> (from_chat_id, message_id) сообщения-образца
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_broadcast")
+def adm_broadcast_start(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id,
+                           "📣 <b>Рассылка всем пользователям</b>\n\n"
+                           "Отправьте сообщение, которое нужно разослать — текст, "
+                           "видео с подписью или без, фото и т.п. Оно будет отправлено "
+                           "как есть каждому пользователю бота.\n\n"
+                           "Отмена — /cancel", parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _broadcast_step_content)
+
+
+def _broadcast_step_content(message):
+    admin_id = message.from_user.id
+    if message.text == '/cancel':
+        bot.send_message(message.chat.id, "Отменено.")
+        return
+
+    _broadcast_pending[admin_id] = (message.chat.id, message.message_id)
+    total = get_all_users_count()
+
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("✅ Отправить всем", callback_data="adm_broadcast_confirm"),
+        types.InlineKeyboardButton("❌ Отмена", callback_data="adm_broadcast_cancel"),
+    )
+    bot.send_message(message.chat.id,
+                     f"⚠️ Разослать это сообщение <b>{total}</b> пользователям?",
+                     reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_broadcast_cancel")
+def adm_broadcast_cancel(call):
+    bot.answer_callback_query(call.id, "Отменено")
+    _broadcast_pending.pop(call.from_user.id, None)
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_broadcast_confirm")
+def adm_broadcast_confirm(call):
+    admin_id = call.from_user.id
+    if not is_admin(admin_id):
+        return
+    pending = _broadcast_pending.pop(admin_id, None)
+    if not pending:
+        bot.answer_callback_query(call.id, "❌ Сообщение для рассылки не найдено, попробуйте заново", show_alert=True)
+        return
+    bot.answer_callback_query(call.id, "🚀 Рассылка запущена, отчёт придёт по завершении")
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
+                      "🚀 Рассылка запущена в фоне, отчёт придёт отдельным сообщением по завершении.")
+
+    from_chat_id, message_id = pending
+    threading.Thread(
+        target=_run_broadcast,
+        args=(admin_id, call.message.chat.id, from_chat_id, message_id),
+        daemon=True,
+    ).start()
+
+
+def _run_broadcast(admin_id, report_chat_id, from_chat_id, message_id):
+    user_ids = get_all_user_ids()
+    sent, failed = 0, 0
+    for uid in user_ids:
+        try:
+            bot.copy_message(uid, from_chat_id, message_id)
+            sent += 1
+        except Exception:
+            failed += 1
+        # небольшая пауза, чтобы не улетать за лимиты Telegram на массовую отправку
+        time.sleep(0.05)
+
+    try:
+        bot.send_message(report_chat_id,
+                         f"📣 <b>Рассылка завершена</b>\n\n"
+                         f"✅ Доставлено: {sent}\n"
+                         f"❌ Не доставлено: {failed}\n"
+                         f"👥 Всего: {len(user_ids)}",
+                         parse_mode="HTML")
+    except Exception:
+        pass

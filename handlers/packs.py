@@ -2,10 +2,10 @@ import random
 
 from telebot import types
 
-from config import PACK_CONFIG, RARITY_CONFIG
+from config import PACK_CONFIG, RARITY_CONFIG, RARITY_ORDER
 from database import (get_user_data, update_coins, update_gems,
                       add_card_to_user, get_all_cards, add_pack_to_user,
-                      get_user_packs, use_pack, increment_packs_opened,
+                      get_user_packs, use_pack, use_all_packs, increment_packs_opened,
                       update_task_progress, on_card_obtained)
 from loader import bot
 from utils import safe_send_message, safe_edit_message
@@ -103,6 +103,9 @@ def pack_view(call):
     if count > 0:
         markup.add(types.InlineKeyboardButton(f"🎴 Открыть пак [{count}шт]",
                                               callback_data=f"pack_open:{pack_type}"))
+    if count > 1:
+        markup.add(types.InlineKeyboardButton(f"📂 Открыть всё [{count}шт]",
+                                              callback_data=f"pack_open_all:{pack_type}"))
     if cfg['price_coins'] > 0:
         markup.add(types.InlineKeyboardButton(f"💰 Купить за {cfg['price_coins']} монет",
                                               callback_data=f"pack_buy_coins:{pack_type}"))
@@ -192,6 +195,59 @@ def pack_open(call):
 
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🎴 Открыть ещё", callback_data=f"pack_view:{pack_type}"))
+    markup.add(types.InlineKeyboardButton("📦 К пакам", callback_data="menu_packs"))
+    markup.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_game_menu"))
+
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
+                      txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("pack_open_all:"))
+def pack_open_all(call):
+    bot.answer_callback_query(call.id)
+    pack_type = call.data.split(":")[1]
+    user_id = call.from_user.id
+    cfg = PACK_CONFIG.get(pack_type)
+    if not cfg:
+        return
+
+    packs_claimed = use_all_packs(user_id, pack_type)
+    if not packs_claimed:
+        bot.answer_callback_query(call.id, "У вас нет этого пака!", show_alert=True)
+        return
+
+    # Открываем все паки сразу
+    cards = []
+    weights = cfg.get('rarity_weights', {})
+    for _ in range(packs_claimed * cfg['cards_count']):
+        card = drop_card_by_weights(weights)
+        if card:
+            is_dup, _ = add_card_to_user(user_id, card['id'])
+            on_card_obtained(user_id, card, is_dup)
+            cards.append(card)
+
+    # Обновляем счётчики заданий разом на всё количество открытых паков
+    increment_packs_opened(user_id, count=packs_claimed)
+    update_task_progress(user_id, "open_pack", "daily", increment=packs_claimed)
+    update_task_progress(user_id, "open_packs_3", "daily", increment=packs_claimed)
+    update_task_progress(user_id, "open_packs_10", "weekly", increment=packs_claimed)
+
+    # При открытии сразу многих паков список карт по одной может быть очень
+    # длинным (лимит сообщения Telegram) — показываем сводку по редкости
+    rarity_counts = {}
+    for card in cards:
+        rarity_counts[card['rarity']] = rarity_counts.get(card['rarity'], 0) + 1
+
+    user_mention = f"@{call.from_user.username}" if call.from_user.username else f"<b>{call.from_user.first_name}</b>"
+    txt = (f"🎴 {user_mention} открыл <b>{packs_claimed}x {cfg['name']}</b>\n"
+           f"➖➖➖➖➖➖➖➖\n\n"
+           f"Получено карт: <b>{len(cards)}</b>\n\n")
+    for rarity in RARITY_ORDER:
+        if rarity in rarity_counts:
+            r_cfg = RARITY_CONFIG.get(rarity, {})
+            txt += f"{r_cfg.get('emoji', '❓')} {r_cfg.get('ru', rarity)}: {rarity_counts[rarity]}\n"
+
+    markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("📦 К пакам", callback_data="menu_packs"))
     markup.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_game_menu"))
 

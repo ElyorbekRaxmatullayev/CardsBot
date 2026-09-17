@@ -6,7 +6,7 @@ from config import RARITY_CONFIG, RARITY_ORDER, FUSE_REQUIRED_COPIES, FUSE_LEVEL
     DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM
 from database import get_all_cards, get_user_data, add_card_to_user, update_last_drop, get_user_inventory, \
     get_user_squad, toggle_squad_member, fuse_cards, is_premium, is_user_banned, update_task_progress, \
-    on_card_obtained
+    on_card_obtained, consume_free_draw
 
 
 def drop_random_card_logic():
@@ -30,21 +30,26 @@ def handler_get_card(message):
     user = get_user_data(message.from_user.id)
     now = datetime.now(timezone.utc)
 
-    cooldown_hours = DROP_COOLDOWN_PREMIUM if is_premium(user) else DROP_COOLDOWN
+    # 5 стартовых бесплатных получений — отдельный одноразовый пул на аккаунт
+    # (выдаётся один раз при первой регистрации, см. get_or_create_user), не
+    # связан с обычным таймером и не сбрасывает/тратит его
+    used_free_draw = (user.get('free_draws_remaining') or 0) > 0 and consume_free_draw(message.from_user.id)
 
-    # Проверка таймера
-    if user['last_timed_drop']:
-        last_drop = datetime.fromisoformat(user['last_timed_drop'])
-        if last_drop.tzinfo is None:
-            last_drop = last_drop.replace(tzinfo=timezone.utc)
-        from datetime import timedelta as _td
-        if now - last_drop < _td(hours=cooldown_hours):
-            diff = _td(hours=cooldown_hours) - (now - last_drop)
-            total_seconds = int(diff.total_seconds())
-            hours, rem = divmod(total_seconds, 3600)
-            minutes, _ = divmod(rem, 60)
-            bot.send_message(message.chat.id, f"⏳ Жди еще: {hours}ч {minutes}мин")
-            return
+    if not used_free_draw:
+        cooldown_hours = DROP_COOLDOWN_PREMIUM if is_premium(user) else DROP_COOLDOWN
+
+        # Проверка таймера
+        if user['last_timed_drop']:
+            last_drop = datetime.fromisoformat(user['last_timed_drop'])
+            if last_drop.tzinfo is None:
+                last_drop = last_drop.replace(tzinfo=timezone.utc)
+            if now - last_drop < timedelta(hours=cooldown_hours):
+                diff = timedelta(hours=cooldown_hours) - (now - last_drop)
+                total_seconds = int(diff.total_seconds())
+                hours, rem = divmod(total_seconds, 3600)
+                minutes, _ = divmod(rem, 60)
+                bot.send_message(message.chat.id, f"⏳ Жди еще: {hours}ч {minutes}мин")
+                return
 
     card = drop_random_card_logic()
     if not card:
@@ -52,7 +57,8 @@ def handler_get_card(message):
         return
 
     is_dup, count = add_card_to_user(message.from_user.id, card['id'])
-    update_last_drop(message.from_user.id, now.isoformat())
+    if not used_free_draw:
+        update_last_drop(message.from_user.id, now.isoformat())
     on_card_obtained(message.from_user.id, card, is_dup)
     update_task_progress(message.from_user.id, "get_card", "daily")
 
@@ -64,6 +70,9 @@ def handler_get_card(message):
                f"⭐️ {card['rarity']}\n"
                f"⚔️ {card['attack']} | ❤️ {card['hp']}")
     if is_dup: caption += f"\n♻️ Дубликат (x{count})"
+    if used_free_draw:
+        remaining = (user.get('free_draws_remaining') or 0) - 1
+        caption += f"\n🎁 Бесплатное получение (осталось: {remaining})"
 
     if card['image_file_id']:
         bot.send_photo(message.chat.id, card['image_file_id'], caption=caption, parse_mode="HTML")

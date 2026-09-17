@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_farm_at TIMESTAMP,
     premium_auto_renew INTEGER DEFAULT 1,
     total_damage_dealt INTEGER DEFAULT 0,
-    last_clan_withdraw TIMESTAMP
+    last_clan_withdraw TIMESTAMP,
+    free_draws_remaining INTEGER DEFAULT 0
 );
 
 -- 2. CARDS
@@ -178,7 +179,8 @@ CREATE TABLE IF NOT EXISTS marriages (
     user1_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     user2_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     status TEXT DEFAULT 'pending',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    married_at TIMESTAMP
 );
 
 -- 17. CLAN_JOIN_REQUESTS
