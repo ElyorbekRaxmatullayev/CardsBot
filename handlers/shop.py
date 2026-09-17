@@ -1,11 +1,11 @@
 from telebot import types
 
-from config import PACK_CONFIG, SHOP_GEMS_PACKAGES, PREMIUM_COST_GEMS, PREMIUM_DAYS, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM
+from config import PACK_CONFIG, SHOP_GEMS_PACKAGES, PREMIUM_COST_GEMS, PREMIUM_DAYS, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, \
+    PREMIUM_BONUS_PACKS
 from database import (get_user_data, update_coins, update_gems, add_pack_to_user, grant_premium, is_premium,
-                      update_task_progress, get_all_cards, add_card_to_user, on_card_obtained)
+                      update_task_progress, grant_premium_bonus_packs)
 from loader import bot, supabase
 from utils import safe_edit_message
-import random
 
 
 # --- МАГАЗИН: ГЛАВНОЕ МЕНЮ ---
@@ -17,6 +17,7 @@ def get_shop_menu_markup():
         types.InlineKeyboardButton("💎 Gems", callback_data="shop_gems"),
     )
     markup.add(types.InlineKeyboardButton("🌟 Premium", callback_data="shop_premium"))
+    markup.add(types.InlineKeyboardButton("⭐ Магазин Stars", callback_data="stars_shop_menu"))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
     return markup
 
@@ -185,7 +186,7 @@ def shop_premium_menu(call):
            f"{renew_txt}\n\n"
            f"Что даёт Premium:\n"
            f"• Кулдаун карты: {cooldown_str} (вместо {DROP_COOLDOWN}ч)\n"
-           f"• 🎁 5 бесплатных карт при покупке\n\n"
+           f"• 🎁 Бонус-паки при ПЕРВОЙ покупке (один раз навсегда)\n\n"
            f"💎 Ваши Gems: <b>{gems}</b>\n"
            f"💰 Цена: <b>{PREMIUM_COST_GEMS} 💎 / {PREMIUM_DAYS} дней</b>")
 
@@ -224,17 +225,14 @@ def shop_buy_premium(call):
     # Включаем автопродление по умолчанию
     supabase.table("users").update({"premium_auto_renew": True}).eq("telegram_id", user_id).execute()
 
-    # 🎁 Дарим 5 бесплатных карт
-    cards_all = get_all_cards()
-    gift_names = []
-    if cards_all:
-        for _ in range(5):
-            card = random.choice(cards_all)
-            is_dup, _ = add_card_to_user(user_id, card['id'])
-            on_card_obtained(user_id, card, is_dup)
-            gift_names.append(card['name'])
-
-    gift_txt = "\n".join(f"🎴 {n}" for n in gift_names) if gift_names else "—"
+    # 🎁 Одноразовый бонус паков — выдаётся только при ПЕРВОЙ покупке Premium
+    # за всё время (любым способом), повторные покупки/продления его не дают
+    bonus_granted = grant_premium_bonus_packs(user_id)
+    if bonus_granted:
+        gift_txt = "\n".join(f"📦 {PACK_CONFIG[p]['name']} x{c}" for p, c in PREMIUM_BONUS_PACKS.items())
+        gift_block = f"\n🎁 Бонус за первую покупку Premium — паки:\n{gift_txt}\n"
+    else:
+        gift_block = ""
 
     bot.answer_callback_query(call.id, f"✅ Premium активирован на {PREMIUM_DAYS} дней!", show_alert=True)
 
@@ -245,8 +243,8 @@ def shop_buy_premium(call):
 
     txt = (f"🌟 <b>Premium активирован!</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
-           f"📅 Срок: {PREMIUM_DAYS} дней\n\n"
-           f"🎁 Подарок — 5 бесплатных карт:\n{gift_txt}\n\n"
+           f"📅 Срок: {PREMIUM_DAYS} дней\n"
+           f"{gift_block}\n"
            f"🔄 <b>Автопродление включено.</b>\n"
            f"Каждый месяц будет списываться {PREMIUM_COST_GEMS} 💎 автоматически.\n"
            f"Вы можете отключить это кнопкой ниже.")

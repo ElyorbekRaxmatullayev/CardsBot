@@ -1148,6 +1148,51 @@ def grant_premium(user_id, days):
     return True
 
 
+def grant_premium_bonus_packs(user_id):
+    """Одноразовый (навсегда) подарок паков при ПЕРВОЙ покупке Premium —
+    любым способом (Gems или Stars). Атомарный клейм по premium_bonus_claimed,
+    чтобы повторная покупка/продление или гонка из двух запросов не выдали
+    его повторно. Возвращает True, если паки реально выданы сейчас."""
+    from config import PREMIUM_BONUS_PACKS
+    claim = supabase.table("users").update({"premium_bonus_claimed": 1}).eq(
+        "telegram_id", user_id).eq("premium_bonus_claimed", 0).execute()
+    if not claim.count:
+        return False
+    for pack_type, count in PREMIUM_BONUS_PACKS.items():
+        add_pack_to_user(user_id, pack_type, count)
+    return True
+
+
+def set_card_stars_price(card_id, price):
+    """Задаёт цену в ⭐ для конкретной карты (используется для Limited)"""
+    supabase.table("cards").update({"stars_price": price}).eq("id", card_id).execute()
+
+
+def get_limited_cards_with_price():
+    """Лимитные карты с заданной ценой в ⭐ — для магазина Stars"""
+    res = supabase.table("cards").select("*").eq("rarity", "Limited").execute()
+    return [c for c in (res.data or []) if c.get('stars_price')]
+
+
+def record_star_payment(charge_id, user_id, payload, stars_amount):
+    """Логирует успешную оплату Telegram Stars. Возвращает False, если этот
+    charge_id уже был обработан ранее (защита от повторного зачисления,
+    если successful_payment по какой-то причине придёт дважды) — в этом
+    случае вызывающий код НЕ должен зачислять покупку повторно."""
+    try:
+        supabase.table("star_payments").insert({
+            "telegram_payment_charge_id": charge_id,
+            "user_id": user_id,
+            "payload": payload,
+            "stars_amount": stars_amount,
+        }).execute()
+        return True
+    except Exception as e:
+        if "23505" in str(e) or "duplicate key" in str(e) or "UNIQUE" in str(e):
+            return False
+        raise
+
+
 def get_premium_auto_renew_candidates():
     """Получает пользователей, у которых истёк премиум, но включено автопродление"""
     now = datetime.now(timezone.utc).isoformat()

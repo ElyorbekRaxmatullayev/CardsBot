@@ -16,6 +16,7 @@ import handlers.marketplace
 import handlers.events
 import handlers.subscription
 import handlers.marriage
+import handlers.stars_shop
 from handlers.middlewares import register_middlewares
 
 if __name__ == '__main__':

@@ -11,7 +11,8 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       search_users, set_user_banned, get_public_profile,
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
-                      toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids)
+                      toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids,
+                      set_card_stars_price)
 from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
@@ -370,12 +371,18 @@ def adm_card_view(call):
            f"💰 Стоимость: {card.get('value', 0)}\n"
            f"📝 {card.get('description') or '—'}\n"
            f"👥 У игроков: {owners}")
+    if card['rarity'] == 'Limited':
+        stars_price = card.get('stars_price')
+        txt += f"\n⭐️ Цена в Stars: {stars_price if stars_price else 'не задана — не продаётся'}"
 
     markup = types.InlineKeyboardMarkup()
     markup.row(
         types.InlineKeyboardButton("✏️ Изменить", callback_data=f"adm_card_edit:{card_id}:{page}"),
         types.InlineKeyboardButton("🗑 Удалить", callback_data=f"adm_card_del:{card_id}:{page}"),
     )
+    if card['rarity'] == 'Limited':
+        markup.add(types.InlineKeyboardButton("⭐ Задать цену в Stars",
+                                              callback_data=f"adm_card_stars_price:{card_id}:{page}"))
     markup.add(types.InlineKeyboardButton("🎁 Выдать эту карту", callback_data=f"adm_card_give_one:{card_id}"))
     markup.add(types.InlineKeyboardButton("🔙 К списку", callback_data=f"adm_cards:{page}"))
 
@@ -385,6 +392,31 @@ def adm_card_view(call):
     else:
         safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
                           reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_card_stars_price:"))
+def adm_card_stars_price_start(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    parts = call.data.split(":")
+    card_id, page = int(parts[1]), int(parts[2])
+    msg = bot.send_message(call.message.chat.id,
+                           "⭐ Введи цену в Stars для этой лимитной карты (целое число):")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _adm_card_stars_price_step, card_id, page)
+
+
+def _adm_card_stars_price_step(message, card_id, page):
+    try:
+        price = int(message.text.strip())
+        if price < 1:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое положительное число:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _adm_card_stars_price_step, card_id, page)
+        return
+    set_card_stars_price(card_id, price)
+    bot.send_message(message.chat.id, f"✅ Цена установлена: {price} ⭐", reply_markup=_adm_back_markup())
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_card_edit:"))

@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS users (
     premium_auto_renew INTEGER DEFAULT 1,
     total_damage_dealt INTEGER DEFAULT 0,
     last_clan_withdraw TIMESTAMP,
-    free_draws_remaining INTEGER DEFAULT 0
+    free_draws_remaining INTEGER DEFAULT 0,
+    premium_bonus_claimed INTEGER DEFAULT 0
 );
 
 -- 2. CARDS
@@ -39,7 +40,8 @@ CREATE TABLE IF NOT EXISTS cards (
     hp INTEGER DEFAULT 200,
     value INTEGER DEFAULT 10,
     image_file_id TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    stars_price INTEGER
 );
 
 -- 3. USER_CARDS
@@ -191,6 +193,17 @@ CREATE TABLE IF NOT EXISTS clan_join_requests (
     status TEXT DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(clan_id, user_id)
+);
+
+-- 18. STAR_PAYMENTS (журнал успешных оплат Telegram Stars — защита от
+-- повторного зачисления, если successful_payment почему-то придёт дважды)
+CREATE TABLE IF NOT EXISTS star_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_payment_charge_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    payload TEXT NOT NULL,
+    stars_amount INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ИНДЕКСЫ

@@ -45,9 +45,13 @@ EXTRA_COLUMNS = {
         # НОВОГО игрока (get_or_create_user), а не задним числом всем, кто
         # уже играет; иначе миграция раздала бы бесплатные карты всем подряд
         ("free_draws_remaining", "INTEGER DEFAULT 0"),
+        ("premium_bonus_claimed", "INTEGER DEFAULT 0"),
     ],
     "marriages": [
         ("married_at", "TIMESTAMP"),
+    ],
+    "cards": [
+        ("stars_price", "INTEGER"),
     ],
 }
 
