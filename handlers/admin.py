@@ -265,6 +265,11 @@ def step_rarity(message, data):
         register_next_step_handler_for_user(bot, msg, message.from_user.id, step_rarity, data)
         return
     data['rarity'] = message.text
+    # value карты определяется редкостью (используется в рейтинге "По ценности"
+    # и при продаже) — раньше этот шаг не спрашивали, и value молча оставалось
+    # дефолтом схемы (10) для ЛЮБОЙ редкости, отсюда рейтинг "по ценности"
+    # у всех совпадал с количеством карт *10
+    data['value'] = RARITY_CONFIG.get(data['rarity'], {}).get('value', 10)
     msg = bot.send_message(message.chat.id, "Введи <b>Атаку и Здоровье</b> через пробел (например: 100 200):",
                            reply_markup=types.ReplyKeyboardRemove(), parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, message.from_user.id, step_stats, data)
@@ -423,6 +428,7 @@ def edit_step_rarity(message, card_id, page, data):
             register_next_step_handler_for_user(bot, msg, message.from_user.id, edit_step_rarity, card_id, page, data)
             return
         data['rarity'] = text
+        data['value'] = RARITY_CONFIG.get(text, {}).get('value', 10)
     msg = bot.send_message(message.chat.id, "Новые <b>Атака и Здоровье</b> через пробел (или «-»):",
                            reply_markup=types.ReplyKeyboardRemove(), parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, message.from_user.id, edit_step_stats, card_id, page, data)

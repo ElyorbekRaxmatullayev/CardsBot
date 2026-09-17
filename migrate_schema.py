@@ -20,6 +20,16 @@ import sqlite3
 DB_PATH = "cardsbot.db"
 SQL_FILE = "sqlite_migrations.sql"
 
+# Держать в синхроне с RARITY_CONFIG[...]['value'] в config.py. Захардкожено
+# здесь напрямую (а не импортом config.py), чтобы этот скрипт оставался
+# полностью самостоятельным — без риска упасть посреди миграции продовой БД
+# из-за отсутствующей переменной окружения (config.py требует ADMIN_ID и т.п.)
+RARITY_VALUES = {
+    "Common": 10, "Uncommon": 25, "Rare": 60, "Epic": 200,
+    "Legendary": 600, "Mythic": 1500, "Divine": 5000,
+    "Secret": 15000, "Limited": 10000,
+}
+
 # Колонки, которые могли отсутствовать в уже существующей базе (добавлены уже
 # после первого деплоя на sqlite). CREATE TABLE IF NOT EXISTS их не добавит,
 # если таблица уже была создана раньше без них — поэтому нужен отдельный шаг.
@@ -59,6 +69,22 @@ def add_missing_tables_and_columns(conn, cur):
                 added += 1
     conn.commit()
     return added
+
+
+def fix_card_values(conn, cur):
+    """Раньше при создании/редактировании карты в админке поле value никогда
+    не спрашивалось и оставалось дефолтом схемы (10) для ЛЮБОЙ редкости —
+    поэтому рейтинг "По ценности" (💎) у всех совпадал с количеством карт*10.
+    Пересчитывает value по факту редкости для всех карт. Безопасно
+    перезапускать: value — производное от редкости поле, отдельно вручную
+    его никто не задаёт."""
+    print("Проверяю value карт (должно зависеть от редкости)...")
+    fixed = 0
+    for rarity, value in RARITY_VALUES.items():
+        cur.execute("UPDATE cards SET value = ? WHERE rarity = ? AND value != ?", (value, rarity, value))
+        fixed += cur.rowcount
+    conn.commit()
+    return fixed
 
 
 def cleanup_ghost_records(conn, cur):
@@ -126,6 +152,7 @@ def main():
     print(f"База: {DB_PATH}")
 
     added = add_missing_tables_and_columns(conn, cur)
+    fixed_values = fix_card_values(conn, cur)
     ghosts = cleanup_ghost_records(conn, cur)
 
     conn.close()
@@ -134,6 +161,11 @@ def main():
         print(f"Схема: добавлено колонок — {added}.")
     else:
         print("Схема: уже была актуальной.")
+
+    if fixed_values:
+        print(f"Исправлено value у карт (по редкости): {fixed_values}")
+    else:
+        print("Value карт уже соответствовал редкости.")
 
     total_ghosts = sum(ghosts.values())
     if total_ghosts:
