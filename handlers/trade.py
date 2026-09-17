@@ -196,37 +196,53 @@ def _trade_step_get_target(message):
     _trade_state[user_id]['target_id'] = target['telegram_id']
     _trade_state[user_id]['target_name'] = target['first_name']
 
-    # Показываем карты пользователя для выбора
+    _send_trade_card_picker(message.chat.id, user_id, target['telegram_id'], target['first_name'], page=0)
+
+
+def _send_trade_card_picker(chat_id, user_id, target_id, target_name, page=0):
+    # Показываем карты пользователя для выбора (только реально имеющиеся —
+    # count=0 остаётся в user_cards как "прокачанная в 0 копий" запись-призрак
+    # или просто отданная/проданная карта, но её саму передать нельзя)
     inv_res = get_user_inventory(user_id)
-    inv_data = inv_res.data if inv_res.data else []
+    inv_data = [item for item in (inv_res.data or []) if item.get('count', 0) > 0 and item.get('cards')]
 
     if not inv_data:
-        bot.send_message(message.chat.id, "У вас нет карт для обмена.")
+        bot.send_message(chat_id, "У вас нет карт для обмена.")
         _trade_state.pop(user_id, None)
         return
 
+    page_items, page, max_page, total = _paginate(inv_data, page)
+
     markup = types.InlineKeyboardMarkup(row_width=1)
-    shown = 0
-    for item in inv_data[:15]:  # Максимум 15 карт в списке
-        card = item.get('cards', {})
-        if not card:
-            continue
+    for item in page_items:
+        card = item['cards']
         emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
         markup.add(types.InlineKeyboardButton(
             f"{emoji} {card['name']} (x{item['count']})",
-            callback_data=f"trade_select_card:{card['id']}:{target['telegram_id']}"
+            callback_data=f"trade_select_card:{card['id']}:{target_id}"
         ))
-        shown += 1
 
-    if not shown:
-        bot.send_message(message.chat.id, "У вас нет карт для обмена.")
-        _trade_state.pop(user_id, None)
-        return
-
+    if max_page > 0:
+        markup.row(*_page_nav_row(f"trade_pick_page:{target_id}", page, max_page))
     markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="menu_trade"))
-    bot.send_message(message.chat.id,
-                     f"Выберите карту для предложения игроку <b>{target['first_name']}</b>:",
+    bot.send_message(chat_id,
+                     f"Выберите карту для предложения игроку <b>{target_name}</b> "
+                     f"(стр. {page + 1}/{max_page + 1}, всего карт: {total}):",
                      reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("trade_pick_page:"))
+def trade_pick_page_cb(call):
+    bot.answer_callback_query(call.id)
+    _, target_id, page = call.data.split(":")
+    user_id = call.from_user.id
+    state = _trade_state.get(user_id) or {}
+    target_name = state.get('target_name', '?')
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+    _send_trade_card_picker(call.message.chat.id, user_id, int(target_id), target_name, page=int(page))
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trade_select_card:"))

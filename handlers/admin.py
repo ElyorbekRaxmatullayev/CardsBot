@@ -9,7 +9,7 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       search_users, set_user_banned, get_public_profile,
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
-                      toggle_channel_mandatory)
+                      toggle_channel_mandatory, get_all_marriages)
 from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
@@ -60,6 +60,9 @@ def admin_start(message, user_id=None):
         types.InlineKeyboardButton("🎉 События", callback_data="adm_events"),
         types.InlineKeyboardButton("📊 Статистика", callback_data="adm_stats"),
     )
+    markup.row(
+        types.InlineKeyboardButton("💍 Браки", callback_data="adm_marriages:0"),
+    )
     row = [types.InlineKeyboardButton("📢 Каналы", callback_data="adm_channels")]
     if is_head_admin(user_id):
         row.insert(0, types.InlineKeyboardButton("👑 Админы", callback_data="adm_admins"))
@@ -87,6 +90,47 @@ def adm_stats(call):
            f"👥 Пользователей: {users_count}\n"
            f"🃏 Карточек в базе: {cards_count}")
     markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="adm_back"))
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
+                      reply_markup=markup, parse_mode="HTML")
+
+
+MARRIAGES_PAGE_SIZE = 10
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_marriages:"))
+def adm_marriages_list(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    page = int(call.data.split(":")[1])
+
+    marriages, total = get_all_marriages(page, MARRIAGES_PAGE_SIZE)
+    max_page = max(0, (total - 1) // MARRIAGES_PAGE_SIZE)
+
+    txt = f"💍 <b>Зарегистрированные браки</b> (всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
+    if not marriages:
+        txt += "Пока нет ни одного брака."
+    else:
+        for m in marriages:
+            u1_name = m.get('u1', {}).get('first_name') or '?'
+            u1_username = m.get('u1', {}).get('username')
+            u2_name = m.get('u2', {}).get('first_name') or '?'
+            u2_username = m.get('u2', {}).get('username')
+            u1_disp = f"@{u1_username}" if u1_username else u1_name
+            u2_disp = f"@{u2_username}" if u2_username else u2_name
+            txt += (f"❤️ <b>{u1_disp}</b> ({m['user1_id']}) + "
+                    f"<b>{u2_disp}</b> ({m['user2_id']})\n")
+
+    markup = types.InlineKeyboardMarkup()
+    nav = []
+    if page > 0:
+        nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"adm_marriages:{page - 1}"))
+    nav.append(types.InlineKeyboardButton(f"{page + 1}/{max_page + 1}", callback_data="ignore"))
+    if page < max_page:
+        nav.append(types.InlineKeyboardButton("➡️", callback_data=f"adm_marriages:{page + 1}"))
+    if len(nav) > 1:
+        markup.row(*nav)
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="adm_back"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
                       reply_markup=markup, parse_mode="HTML")

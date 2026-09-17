@@ -5,6 +5,7 @@ from database import create_clan, update_coins, update_task_progress
 from database import get_clan_info, get_clan_members_paginated, get_public_profile
 from database import get_user_data, leave_clan, join_clan, search_clans, is_user_banned
 from database import get_all_clans_list, request_join_clan, get_pending_clan_requests, accept_clan_request, reject_clan_request
+from database import withdraw_from_clan_treasury
 from loader import bot
 from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user
 
@@ -25,6 +26,7 @@ def back_to_clan_menu(call):
 
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("📜 Участники", callback_data=f"clan_mem_{clan_id}_0"))
+    markup.add(types.InlineKeyboardButton("💸 Забрать из казны", callback_data="clan_withdraw"))
     markup.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_game_menu"))
 
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt, reply_markup=markup, parse_mode="HTML")
@@ -111,6 +113,7 @@ def clan_main_menu(message, user_id=None, page=0):
                f"👑 Роль: {'Лидер' if is_leader else 'Участник'}")
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📜 Участники", callback_data=f"clan_mem_{user['clan_id']}_0"))
+        markup.add(types.InlineKeyboardButton("💸 Забрать из казны", callback_data="clan_withdraw"))
         if is_leader:
             markup.add(types.InlineKeyboardButton("📩 Заявки на вступление", callback_data=f"clan_reqs_{user['clan_id']}"))
             markup.add(types.InlineKeyboardButton("🗑️ Удалить клан", callback_data=f"clan_delete_confirm_{user['clan_id']}"))
@@ -163,6 +166,15 @@ def clan_menu_back_cb(call):
 
 
 # --- ВЫХОД ИЗ КЛАНА ---
+
+@bot.callback_query_handler(func=lambda call: call.data == "clan_withdraw")
+def clan_withdraw_cb(call):
+    success, result = withdraw_from_clan_treasury(call.from_user.id)
+    if success:
+        bot.answer_callback_query(call.id, f"✅ Вы получили {result} 💰 из казны клана!", show_alert=True)
+    else:
+        bot.answer_callback_query(call.id, f"❌ {result}", show_alert=True)
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "clan_leave_confirm")
 def clan_leave_confirm(call):

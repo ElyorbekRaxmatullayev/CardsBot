@@ -29,6 +29,9 @@ EXTRA_COLUMNS = {
         ("war_wins", "INTEGER DEFAULT 0"),
         ("last_war_at", "TIMESTAMP"),
     ],
+    "users": [
+        ("last_clan_withdraw", "TIMESTAMP"),
+    ],
 }
 
 
@@ -59,6 +62,19 @@ def cleanup_ghost_records(conn, cur):
 
     cur.execute("DELETE FROM user_cards WHERE card_id NOT IN (SELECT id FROM cards)")
     report["user_cards на удалённую карту"] = cur.rowcount
+
+    # Раньше fuse_cards() при слиянии ровно последних копий уводил count в 0,
+    # хотя карта на самом деле осталась у игрока (просто прокачанная) — из-за
+    # этого она пропадала из инвентаря/обмена. Возвращаем такие карты обратно
+    # (ставим count=1), а не удаляем — их владелец не терял карту, это баг
+    # отображения/учёта, а не желание избавиться от неё.
+    cur.execute("UPDATE user_cards SET count = 1 WHERE count = 0 AND card_level > 1")
+    report["восстановлено прокачанных карт с обнулённым count"] = cur.rowcount
+
+    # А вот записи с count=0 и без прокачки — настоящие призраки (отдали/продали
+    # всё до последней копии, строка осталась), их можно смело убрать
+    cur.execute("DELETE FROM user_cards WHERE count = 0 AND (card_level IS NULL OR card_level <= 1)")
+    report["пустые записи user_cards (count=0, без прокачки)"] = cur.rowcount
 
     cur.execute("DELETE FROM user_squads WHERE card_id NOT IN (SELECT id FROM cards)")
     report["слоты в отряде на удалённую карту"] = cur.rowcount

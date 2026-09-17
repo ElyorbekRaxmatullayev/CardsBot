@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
     total_epic_obtained INTEGER DEFAULT 0,
     last_farm_at TIMESTAMP,
     premium_auto_renew INTEGER DEFAULT 1,
-    total_damage_dealt INTEGER DEFAULT 0
+    total_damage_dealt INTEGER DEFAULT 0,
+    last_clan_withdraw TIMESTAMP
 );
 
 -- 2. CARDS

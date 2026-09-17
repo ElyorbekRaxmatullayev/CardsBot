@@ -851,7 +851,12 @@ def fuse_cards(user_id, card_id, count_required=3):
     if not existing.data or existing.data[0]['count'] < count_required:
         return False, f"Нужно минимум {count_required} копии"
     row = existing.data[0]
-    new_count = row['count'] - count_required
+    # +1, т.к. слияние объединяет count_required копий в ОДНУ прокачанную —
+    # копия не исчезает, а становится карту уровнем выше. Раньше здесь стояло
+    # без +1, из-за чего при слиянии ровно последних копий count уходил в 0,
+    # хотя игрок формально всё ещё владеет прокачанной картой: она пропадала
+    # из инвентаря/обмена/сквада, потому что везде идёт проверка count > 0.
+    new_count = row['count'] - count_required + 1
     current_level = row.get('card_level', 1) or 1
     new_level = current_level + 1
 
@@ -1234,6 +1239,19 @@ def divorce(user_id):
     return True
 
 
+def get_all_marriages(page=0, page_size=10):
+    """Список действующих браков с пагинацией — для админки"""
+    start = page * page_size
+    end = start + page_size - 1
+
+    count_res = supabase.table("marriages").select("id", count="exact").eq("status", "active").execute()
+    total = count_res.count or 0
+
+    res = supabase.table("marriages").select("*").eq("status", "active").order(
+        "id", desc=True).range(start, end).execute()
+    return res.data or [], total
+
+
 def find_user_by_username(username):
     """Ищет пользователя по username (без @)"""
     q = username.lstrip('@').strip()
@@ -1363,6 +1381,67 @@ def get_top_clans_by_war_wins(limit=10):
     """Топ кланов по победам в клановых войнах"""
     res = supabase.table("clans").select("name, war_wins").order("war_wins", desc=True).limit(limit).execute()
     return res.data or []
+
+
+def get_clan_withdraw_status(user_id):
+    """Возвращает (can_withdraw: bool, seconds_left: int) для личного получения
+    монет из казны клана — раз в сутки на участника."""
+    from config import CLAN_WITHDRAW_COOLDOWN_HOURS
+    user = get_user_data(user_id)
+    if not user:
+        return False, 0
+    last = user.get('last_clan_withdraw')
+    if not last:
+        return True, 0
+    now = datetime.now(timezone.utc)
+    last_dt = datetime.fromisoformat(last.replace('Z', '+00:00'))
+    diff = now - last_dt
+    cooldown = timedelta(hours=CLAN_WITHDRAW_COOLDOWN_HOURS)
+    if diff >= cooldown:
+        return True, 0
+    return False, int((cooldown - diff).total_seconds())
+
+
+def withdraw_from_clan_treasury(user_id):
+    """Личное получение монет из казны клана (раз в сутки на участника).
+    Казна не может уйти ниже CLAN_WITHDRAW_MIN_TREASURY. Возвращает
+    (success, message_or_amount)."""
+    from config import CLAN_WITHDRAW_AMOUNT, CLAN_WITHDRAW_MIN_TREASURY
+
+    user = get_user_data(user_id)
+    if not user or not user.get('clan_id'):
+        return False, "Вы не в клане"
+
+    can_withdraw, seconds_left = get_clan_withdraw_status(user_id)
+    if not can_withdraw:
+        hours = seconds_left // 3600
+        minutes = (seconds_left % 3600) // 60
+        return False, f"Вы уже получали монеты из казны сегодня. Следующая выплата через {hours}ч {minutes}м"
+
+    clan = get_clan_info(user['clan_id'])
+    if not clan:
+        return False, "Клан не найден"
+
+    treasury = clan.get('coins') or 0
+    min_required = CLAN_WITHDRAW_MIN_TREASURY + CLAN_WITHDRAW_AMOUNT
+    if treasury < min_required:
+        return False, f"В казне должно быть минимум {min_required} 💰 (сейчас {treasury} 💰)"
+
+    # Атомарный клейм по прочитанному значению казны — если два запроса (два
+    # быстрых нажатия, или два участника разом) прочитают одну и ту же
+    # казну, обновить её по этому условию сможет только первый; второй
+    # получит count=0 и не спишет монеты повторно.
+    new_treasury = treasury - CLAN_WITHDRAW_AMOUNT
+    claim = supabase.table("clans").update({"coins": new_treasury}).eq(
+        "id", clan['id']).eq("coins", treasury).execute()
+    if not claim.count:
+        return False, "Кто-то уже забрал монеты из казны прямо сейчас — попробуйте ещё раз"
+
+    update_coins(user_id, CLAN_WITHDRAW_AMOUNT)
+    now = datetime.now(timezone.utc).isoformat()
+    supabase.table("users").update({"last_clan_withdraw": now}).eq("telegram_id", user_id).execute()
+
+    return True, CLAN_WITHDRAW_AMOUNT
 
 
 # --- ЗАЯВКИ В КЛАНЫ ---
