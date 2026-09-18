@@ -24,6 +24,7 @@ def get_main_reply_markup(selective=False):
     markup.row(types.KeyboardButton("🎴 Получить карту"), types.KeyboardButton("🗂 Мои карты"))
     markup.row(types.KeyboardButton("👥 Кланы"), types.KeyboardButton("🎮 Играть"), types.KeyboardButton("ℹ️ О нас"))
     markup.row(types.KeyboardButton("⛏️ Фарм"), types.KeyboardButton("❤️ Брак"), types.KeyboardButton("⚙️ Настройки"))
+    markup.row(types.KeyboardButton("👑 Premium"))
     return markup
 
 

@@ -1,22 +1,21 @@
 from telebot import types
 
-from config import PACK_CONFIG, SHOP_GEMS_PACKAGES, PREMIUM_COST_GEMS, PREMIUM_DAYS, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, \
-    PREMIUM_BONUS_PACKS
-from database import (get_user_data, update_coins, update_gems, add_pack_to_user, grant_premium, is_premium,
-                      update_task_progress, grant_premium_bonus_packs)
+from config import PACK_CONFIG, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, STARS_VIP_PACKAGES
+from database import get_user_data, update_coins, update_gems, add_pack_to_user, is_premium, update_task_progress
 from loader import bot, supabase
-from utils import safe_edit_message
+from utils import safe_edit_message, safe_send_message
 
 
 # --- МАГАЗИН: ГЛАВНОЕ МЕНЮ ---
+# Обмен Gems<->монеты и покупка Premium за Gems убраны — теперь всё, что
+# продаётся за реальные деньги (Gems, монеты, карты, Premium), продаётся
+# ТОЛЬКО за Telegram Stars (см. handlers/stars_shop.py и кнопку "👑 Premium"
+# в основной reply-клавиатуре). Здесь остаётся только покупка паков за
+# внутриигровые монеты/Gems, добытые в самой игре.
 
 def get_shop_menu_markup():
     markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("📦 Паки", callback_data="shop_packs"),
-        types.InlineKeyboardButton("💎 Gems", callback_data="shop_gems"),
-    )
-    markup.add(types.InlineKeyboardButton("🌟 Premium", callback_data="shop_premium"))
+    markup.add(types.InlineKeyboardButton("📦 Паки", callback_data="shop_packs"))
     markup.add(types.InlineKeyboardButton("⭐ Магазин Stars", callback_data="stars_shop_menu"))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
     return markup
@@ -105,54 +104,11 @@ def shop_buy_pack(call):
     shop_packs(call)
 
 
-# --- МАГАЗИН: GEMS ---
-
-@bot.callback_query_handler(func=lambda call: call.data == "shop_gems")
-def shop_gems_menu(call):
-    bot.answer_callback_query(call.id)
-    user_id = call.from_user.id
-    user = get_user_data(user_id)
-    gems = user.get('gems', 0) or 0
-
-    txt = (f"💎 <b>Купить Gems</b>\n"
-           f"➖➖➖➖➖➖➖➖\n"
-           f"💰 Ваши монеты: <b>{user['coins']}</b>\n"
-           f"💎 Ваши Gems: <b>{gems}</b>\n\n"
-           f"Gems — редкая премиум-валюта.\n"
-           f"Используется для покупки Legendary и Mythic паков.\n\n"
-           f"Выберите пакет:")
-
-    markup = types.InlineKeyboardMarkup()
-    for i, pkg in enumerate(SHOP_GEMS_PACKAGES):
-        markup.add(types.InlineKeyboardButton(pkg['label'], callback_data=f"shop_buy_gems:{i}"))
-    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_shop"))
-
-    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                      txt, reply_markup=markup, parse_mode="HTML")
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("shop_buy_gems:"))
-def shop_buy_gems(call):
-    idx = int(call.data.split(":")[1])
-    if idx >= len(SHOP_GEMS_PACKAGES):
-        return
-    pkg = SHOP_GEMS_PACKAGES[idx]
-    user_id = call.from_user.id
-    user = get_user_data(user_id)
-
-    if user['coins'] < pkg['price_coins']:
-        bot.answer_callback_query(call.id,
-                                  f"Недостаточно монет! Нужно {pkg['price_coins']} 💰", show_alert=True)
-        return
-
-    update_coins(user_id, -pkg['price_coins'])
-    update_task_progress(user_id, "spend_coins", "weekly", increment=pkg['price_coins'])
-    update_gems(user_id, pkg['gems'])
-    bot.answer_callback_query(call.id, f"✅ Получено {pkg['gems']} 💎 Gems!")
-    shop_gems_menu(call)
-
-
-# --- МАГАЗИН: PREMIUM ---
+# --- PREMIUM: ОТДЕЛЬНАЯ КНОПКА В REPLY-КЛАВИАТУРЕ, ОПЛАТА ТОЛЬКО ЗА STARS ---
+# Покупка за Gems убрана целиком — единственный способ купить/продлить
+# Premium теперь Telegram Stars (см. handlers/stars_shop.py, stars_buy_vip).
+# Автопродление за Gems оставлено только как переключатель для тех, у кого
+# оно ещё включено с прошлых покупок — новых включений через эту кнопку нет.
 
 def _get_auto_renew_status(user):
     """Возвращает статус автопродления из данных пользователя"""
@@ -160,97 +116,40 @@ def _get_auto_renew_status(user):
     return val if val is not None else True  # по умолчанию включено
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "shop_premium")
-def shop_premium_menu(call):
-    bot.answer_callback_query(call.id)
-    user_id = call.from_user.id
+@bot.message_handler(func=lambda m: m.text == "👑 Premium")
+def premium_menu_reply(message, user_id=None):
+    # user_id передаётся явно при возврате сюда из callback (там message —
+    # сообщение БОТА, и message.from_user внутри него — это сам бот, а не игрок)
+    user_id = user_id or message.from_user.id
     user = get_user_data(user_id)
-    gems = user.get('gems', 0) or 0
     auto_renew = _get_auto_renew_status(user)
 
     if is_premium(user):
         until = user['premium_until'].replace('T', ' ').split('.')[0].split('+')[0]
         status_txt = f"✅ Активен до {until} UTC"
-        renew_txt = "🔄 Автопродление: ✅ Вкл" if auto_renew else "🔄 Автопродление: ❌ Выкл"
     else:
         status_txt = "❌ Не активен"
-        renew_txt = ""
 
     cooldown_min = int(DROP_COOLDOWN_PREMIUM * 60)
     h, m = divmod(cooldown_min, 60)
     cooldown_str = f"{h}ч {m}мин" if h > 0 else f"{m}мин"
 
-    txt = (f"🌟 <b>Premium-подписка</b>\n"
+    txt = (f"👑 <b>Premium-подписка</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
-           f"Статус: {status_txt}\n"
-           f"{renew_txt}\n\n"
+           f"Статус: {status_txt}\n\n"
            f"Что даёт Premium:\n"
            f"• Кулдаун карты: {cooldown_str} (вместо {DROP_COOLDOWN}ч)\n"
            f"• 🎁 Бонус-паки при ПЕРВОЙ покупке (один раз навсегда)\n\n"
-           f"💎 Ваши Gems: <b>{gems}</b>\n"
-           f"💰 Цена: <b>{PREMIUM_COST_GEMS} 💎 / {PREMIUM_DAYS} дней</b>")
+           f"Оплата — Telegram Stars ⭐:")
 
     markup = types.InlineKeyboardMarkup()
-    if not is_premium(user):
-        markup.add(types.InlineKeyboardButton(
-            f"🌟 Купить Premium — {PREMIUM_COST_GEMS} 💎",
-            callback_data="shop_buy_premium"
-        ))
-    else:
-        # Кнопка переключения автопродления
-        toggle_label = "🔕 Отключить автопродление" if auto_renew else "🔔 Включить автопродление"
-        markup.add(types.InlineKeyboardButton(toggle_label, callback_data="shop_toggle_autorenew"))
+    for days, stars in STARS_VIP_PACKAGES:
+        markup.add(types.InlineKeyboardButton(f"👑 {days} дней — {stars} ⭐",
+                                              callback_data=f"stars_buy_vip:{days}:{stars}"))
+    if is_premium(user) and auto_renew:
+        markup.add(types.InlineKeyboardButton("🔕 Отключить автопродление (Gems)", callback_data="shop_toggle_autorenew"))
 
-    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_shop"))
-    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                      txt, reply_markup=markup, parse_mode="HTML")
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "shop_buy_premium")
-def shop_buy_premium(call):
-    user_id = call.from_user.id
-    user = get_user_data(user_id)
-    gems = user.get('gems', 0) or 0
-
-    if gems < PREMIUM_COST_GEMS:
-        bot.answer_callback_query(call.id,
-                                  f"Недостаточно Gems! Нужно {PREMIUM_COST_GEMS} 💎\n"
-                                  f"У вас: {gems} 💎", show_alert=True)
-        return
-
-    # Списываем gems
-    update_gems(user_id, -PREMIUM_COST_GEMS)
-    # Выдаём Premium
-    grant_premium(user_id, PREMIUM_DAYS)
-    # Включаем автопродление по умолчанию
-    supabase.table("users").update({"premium_auto_renew": True}).eq("telegram_id", user_id).execute()
-
-    # 🎁 Одноразовый бонус паков — выдаётся только при ПЕРВОЙ покупке Premium
-    # за всё время (любым способом), повторные покупки/продления его не дают
-    bonus_granted = grant_premium_bonus_packs(user_id)
-    if bonus_granted:
-        gift_txt = "\n".join(f"📦 {PACK_CONFIG[p]['name']} x{c}" for p, c in PREMIUM_BONUS_PACKS.items())
-        gift_block = f"\n🎁 Бонус за первую покупку Premium — паки:\n{gift_txt}\n"
-    else:
-        gift_block = ""
-
-    bot.answer_callback_query(call.id, f"✅ Premium активирован на {PREMIUM_DAYS} дней!", show_alert=True)
-
-    # Показываем подтверждение
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔕 Отключить автопродление", callback_data="shop_toggle_autorenew"))
-    markup.add(types.InlineKeyboardButton("🔙 В магазин", callback_data="menu_shop"))
-
-    txt = (f"🌟 <b>Premium активирован!</b>\n"
-           f"➖➖➖➖➖➖➖➖\n"
-           f"📅 Срок: {PREMIUM_DAYS} дней\n"
-           f"{gift_block}\n"
-           f"🔄 <b>Автопродление включено.</b>\n"
-           f"Каждый месяц будет списываться {PREMIUM_COST_GEMS} 💎 автоматически.\n"
-           f"Вы можете отключить это кнопкой ниже.")
-
-    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                      txt, reply_markup=markup, parse_mode="HTML")
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "shop_toggle_autorenew")
@@ -263,5 +162,5 @@ def toggle_autorenew(call):
     supabase.table("users").update({"premium_auto_renew": new_val}).eq("telegram_id", user_id).execute()
     status = "✅ включено" if new_val else "❌ выключено"
     bot.answer_callback_query(call.id, f"Автопродление {status}", show_alert=True)
-    # Обновляем экран
-    shop_premium_menu(call)
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    premium_menu_reply(call.message, user_id=user_id)
