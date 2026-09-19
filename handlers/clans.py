@@ -7,7 +7,7 @@ from database import get_user_data, leave_clan, join_clan, search_clans, is_user
 from database import get_all_clans_list, request_join_clan, get_pending_clan_requests, accept_clan_request, reject_clan_request
 from database import withdraw_from_clan_treasury
 from loader import bot
-from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user
+from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user, reply_match
 
 
 # --- ГЛАВНОЕ МЕНЮ КЛАНОВ (Вход) ---
@@ -95,7 +95,7 @@ def view_public_profile(call):
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt, reply_markup=markup, parse_mode="HTML")
 
 
-@bot.message_handler(func=lambda m: m.text == "👥 Кланы")
+@bot.message_handler(func=reply_match("👥 Кланы", "Кланы"))
 def clan_main_menu(message, user_id=None, page=0):
     user_id = user_id or message.from_user.id
 

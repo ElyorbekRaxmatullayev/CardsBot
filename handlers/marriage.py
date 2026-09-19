@@ -4,10 +4,10 @@ from database import (get_user_marriage, get_pending_marriage_request, get_sent_
                       propose_marriage, accept_marriage, reject_marriage, divorce, find_user_by_username,
                       get_user_data, is_user_banned)
 from loader import bot
-from utils import safe_edit_message, register_next_step_handler_for_user
+from utils import safe_edit_message, register_next_step_handler_for_user, reply_match
 
 
-@bot.message_handler(func=lambda m: m.text == "❤️ Брак")
+@bot.message_handler(func=reply_match("❤️ Брак", "Брак"))
 def marriage_main_menu(message, user_id=None):
     user_id = user_id or message.from_user.id
 

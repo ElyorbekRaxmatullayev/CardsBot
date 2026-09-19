@@ -10,7 +10,7 @@ from database import (get_or_create_user, get_user_data, get_top_by_coins,
                       get_user_marriage, get_top_clans_by_treasury, get_top_clans_by_war_wins)
 from database import is_premium, get_clan_name, is_user_banned, update_task_progress, on_card_obtained
 from loader import bot
-from utils import safe_send_message, safe_edit_message
+from utils import safe_send_message, safe_edit_message, reply_match
 
 
 # ─────────────────────────────────────────────
@@ -134,7 +134,7 @@ def send_welcome(message):
         print(f"Error sending message: {e}")
 
 
-@bot.message_handler(func=lambda m: m.text == "🎮 Играть")
+@bot.message_handler(func=reply_match("🎮 Играть", "Играть"))
 def game_menu_handler(message):
     if is_user_banned(message.from_user.id):
         bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")
@@ -143,7 +143,7 @@ def game_menu_handler(message):
     safe_send_message(bot, message.chat.id, txt, reply_markup=get_game_inline_markup(), parse_mode="HTML", owner_id=message.from_user.id)
 
 
-@bot.message_handler(func=lambda m: m.text == "ℹ️ О нас")
+@bot.message_handler(func=reply_match("ℹ️ О нас", "О нас"))
 def about_handler(message):
     txt = ("‼️ <b>Информация о нас.</b>\n"
            "➖➖➖➖➖➖\n"
@@ -153,7 +153,7 @@ def about_handler(message):
     safe_send_message(bot, message.chat.id, txt, reply_markup=get_back_markup(), parse_mode="HTML")
 
 
-@bot.message_handler(func=lambda m: m.text == "⚙️ Настройки")
+@bot.message_handler(func=reply_match("⚙️ Настройки", "Настройки"))
 def settings_handler(message):
     user = get_user_data(message.from_user.id)
     notif = user.get('notification_settings', {}).get('drop', True) if user.get('notification_settings') else True
@@ -370,7 +370,7 @@ def get_daily_bonus(call):
 
 # --- ФАРМ МОНЕТ ---
 
-@bot.message_handler(func=lambda m: m.text == "⛏️ Фарм")
+@bot.message_handler(func=reply_match("⛏️ Фарм", "Фарм"))
 def farm_handler(message):
     if is_user_banned(message.from_user.id):
         bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")

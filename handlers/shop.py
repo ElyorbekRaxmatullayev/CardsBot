@@ -3,7 +3,7 @@ from telebot import types
 from config import PACK_CONFIG, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, STARS_VIP_PACKAGES
 from database import get_user_data, update_coins, update_gems, add_pack_to_user, is_premium, update_task_progress
 from loader import bot, supabase
-from utils import safe_edit_message, safe_send_message
+from utils import safe_edit_message, safe_send_message, reply_match
 
 
 # --- МАГАЗИН: ГЛАВНОЕ МЕНЮ ---
@@ -116,7 +116,7 @@ def _get_auto_renew_status(user):
     return val if val is not None else True  # по умолчанию включено
 
 
-@bot.message_handler(func=lambda m: m.text == "👑 Premium")
+@bot.message_handler(func=reply_match("👑 Premium", "Premium"))
 def premium_menu_reply(message, user_id=None):
     # user_id передаётся явно при возврате сюда из callback (там message —
     # сообщение БОТА, и message.from_user внутри него — это сам бот, а не игрок)

@@ -7,6 +7,7 @@ from config import RARITY_CONFIG, RARITY_ORDER, FUSE_REQUIRED_COPIES, FUSE_LEVEL
 from database import get_all_cards, get_user_data, add_card_to_user, update_last_drop, get_user_inventory, \
     get_user_squad, toggle_squad_member, fuse_cards, is_premium, is_user_banned, update_task_progress, \
     on_card_obtained, consume_free_draw
+from utils import reply_match
 
 
 def drop_random_card_logic():
@@ -21,7 +22,7 @@ def drop_random_card_logic():
     return random.choices(population, weights=weights, k=1)[0]
 
 
-@bot.message_handler(func=lambda m: m.text == "🎴 Получить карту")
+@bot.message_handler(func=reply_match("🎴 Получить карту", "Получить карту"))
 def handler_get_card(message):
     if is_user_banned(message.from_user.id):
         bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")
@@ -80,7 +81,7 @@ def handler_get_card(message):
         bot.send_message(message.chat.id, caption, parse_mode="HTML")
 
 
-@bot.message_handler(func=lambda m: m.text == "🗂 Мои карты")
+@bot.message_handler(func=reply_match("🗂 Мои карты", "Мои карты"))
 def inventory_menu(message, user_id=None):
     # user_id передаётся явно, когда сюда заходят из другого раздела через callback
     # (например, "Мой отряд" на арене) — там message это сообщение БОТА, и

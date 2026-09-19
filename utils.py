@@ -34,6 +34,17 @@ def safe_send_message(bot, chat_id, text, reply_markup=None, parse_mode=None, ow
         return None
 
 
+def reply_match(*labels):
+    """Фильтр для reply-кнопок, который срабатывает на любой из переданных
+    вариантов текста — передавай и версию с эмодзи (как на самой кнопке), и
+    простой текст без него, чтобы бот реагировал и когда пользователь в чате
+    сам набрал команду текстом (например "Получить карту" вместо "🎴 Получить
+    карту"). Сравнение без учёта регистра — в чате не все аккуратно набирают
+    заглавные буквы."""
+    variants = {label.casefold() for label in labels}
+    return lambda m: bool(m.text) and m.text.strip().casefold() in variants
+
+
 def register_next_step_handler_for_user(bot, message, user_id, callback, *args, **kwargs):
     def _wrapper(m):
         if m.from_user.id != user_id:
