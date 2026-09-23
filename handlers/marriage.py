@@ -33,8 +33,9 @@ def marriage_main_menu(message, user_id=None):
 
     pending_in = get_pending_marriage_request(user_id)
     if pending_in:
-        sender_name = pending_in['users'].get('first_name', '?')
-        sender_username = pending_in['users'].get('username')
+        sender = pending_in.get('u1') or {}
+        sender_name = sender.get('first_name', '?')
+        sender_username = sender.get('username')
         display_name = f"@{sender_username}" if sender_username else sender_name
 
         txt = (f"💌 <b>Входящее предложение</b>\n\n"
