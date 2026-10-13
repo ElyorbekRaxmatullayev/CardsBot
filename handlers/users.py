@@ -390,7 +390,15 @@ def farm_handler(message):
         )
         return
 
+    # do_farm_coins сам атомарно перепроверяет кулдаун при записи — amount=0
+    # значит либо кулдаун и правда не прошёл, либо это гонка из нескольких
+    # быстрых нажатий, и фарм уже выполнил другой из параллельных запросов
     amount = do_farm_coins(user_id)
+    if not amount:
+        bot.send_message(message.chat.id, "⏳ Фарм ещё не готов!",
+                         reply_to_message_id=message.message_id if message.chat.type != 'private' else None)
+        return
+
     user_mention = f"@{message.from_user.username}" if message.from_user.username else f"<b>{message.from_user.first_name}</b>"
     bot.send_message(
         message.chat.id,

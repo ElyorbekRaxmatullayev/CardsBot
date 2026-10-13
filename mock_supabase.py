@@ -75,6 +75,13 @@ class QueryBuilder:
         self._params.append(val)
         return self
 
+    def is_null(self, col):
+        """WHERE col IS NULL — eq(col, None) не годится: 'col = ?' с
+        параметром NULL в SQL никогда не истинно, нужен отдельный оператор."""
+        prefix = "" if "." in col else f"{self.table}."
+        self._where.append(f"{prefix}{col} IS NULL")
+        return self
+
     def ilike(self, col, val):
         prefix = "" if "." in col else f"{self.table}."
         self._where.append(f"{prefix}{col} LIKE ?")

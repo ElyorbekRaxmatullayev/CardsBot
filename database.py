@@ -28,6 +28,12 @@ def get_or_create_user(user_id, username, first_name, referrer_id=None):
         except Exception as e:
             if "23505" not in str(e) and "duplicate key" not in str(e):
                 raise
+            # Гонка: два параллельных /start для одного и того же user_id —
+            # кто-то другой уже создал эту строку первым. ЭТОТ вызов её не
+            # создал, значит начислять бонус рефералу нельзя — иначе два
+            # одновременных /start по одной ссылке дублировали бы +500 монет
+            # рефереру (именно так и накручивали монеты).
+            return None
 
         if referrer_id:
             try:
@@ -553,12 +559,16 @@ def update_task_progress(user_id, task_id, period, increment=1):
 
 
 def claim_task_reward(user_id, task_id, period):
-    """Помечает задание как полученное. Возвращает True если успешно"""
+    """Помечает задание как полученное. Возвращает True, если награда реально
+    забрана именно этим вызовом. Атомарный клейм (WHERE claimed=0) — без него
+    двойное нажатие/гонка из двух запросов могли дважды пометить задание
+    claimed=True и дважды выдать награду в вызывающем коде."""
     res = supabase.table("user_tasks").select("*").eq("user_id", user_id).eq("task_id", task_id).eq("period", period).execute()
-    if res.data and not res.data[0].get('claimed'):
-        supabase.table("user_tasks").update({"claimed": True}).eq("id", res.data[0]['id']).execute()
-        return True
-    return False
+    if not res.data or res.data[0].get('claimed'):
+        return False
+    claim = supabase.table("user_tasks").update({"claimed": True}).eq(
+        "id", res.data[0]['id']).eq("claimed", False).execute()
+    return bool(claim.count)
 
 
 def reset_daily_tasks(user_id):
@@ -575,12 +585,21 @@ def get_user_achievements(user_id):
 
 
 def award_achievement(user_id, achievement_id):
-    """Выдаёт достижение. Возвращает True если выдано впервые"""
+    """Выдаёт достижение. Возвращает True, если выдано именно этим вызовом.
+    user_achievements имеет UNIQUE(user_id, achievement_id) — при гонке из
+    двух параллельных запросов второй insert упадёт на этом ограничении;
+    ловим это как "уже выдано", а не даём исключению уйти наверх и выдать
+    награду (coins/gems) дважды в вызывающем коде."""
     existing = supabase.table("user_achievements").select("*").eq("user_id", user_id).eq("achievement_id", achievement_id).execute()
     if existing.data:
         return False
-    supabase.table("user_achievements").insert({"user_id": user_id, "achievement_id": achievement_id}).execute()
-    return True
+    try:
+        supabase.table("user_achievements").insert({"user_id": user_id, "achievement_id": achievement_id}).execute()
+        return True
+    except Exception as e:
+        if "23505" in str(e) or "duplicate key" in str(e) or "UNIQUE" in str(e):
+            return False
+        raise
 
 
 # --- ОБМЕН (TRADE) ---
@@ -1227,19 +1246,34 @@ def check_farm_available(user_id):
 
 
 def do_farm_coins(user_id):
-    """Выполняет фарм монет — начисляет рандомно 1–100 монет. Возвращает (amount: int)"""
+    """Выполняет фарм монет — начисляет рандомно 1–FARM_MAX_COINS монет, если
+    кулдаун прошёл. Атомарный клейм по прочитанному last_farm_at: несколько
+    быстрых нажатий/гонка из параллельных запросов раньше могли все пройти
+    проверку кулдауна (она была отдельным вызовом check_farm_available) и
+    получить фарм по нескольку раз — именно так монеты и накручивали.
+    Возвращает amount (0, если кулдаун не прошёл или клейм проиграл гонку)."""
     import random
-    from config import FARM_MAX_COINS
-    amount = random.randint(1, FARM_MAX_COINS)
-    now = datetime.now(timezone.utc).isoformat()
+    from config import FARM_MAX_COINS, FARM_COOLDOWN_HOURS
+
     user = get_user_data(user_id)
     if not user:
         return 0
-    supabase.table("users").update({
+
+    last_farm = user.get('last_farm_at')
+    now = datetime.now(timezone.utc)
+    if last_farm:
+        last = datetime.fromisoformat(last_farm.replace('Z', '+00:00'))
+        if now - last < timedelta(hours=FARM_COOLDOWN_HOURS):
+            return 0
+
+    amount = random.randint(1, FARM_MAX_COINS)
+    q = supabase.table("users").update({
         "coins": user['coins'] + amount,
-        "last_farm_at": now
-    }).eq("telegram_id", user_id).execute()
-    return amount
+        "last_farm_at": now.isoformat(),
+    }).eq("telegram_id", user_id)
+    q = q.eq("last_farm_at", last_farm) if last_farm else q.is_null("last_farm_at")
+    claim = q.execute()
+    return amount if claim.count else 0
 
 
 # --- РЕЙТИНГ АРЕНЫ ПО УРОНУ ---
