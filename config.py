@@ -24,7 +24,7 @@ RARITY_ORDER = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Di
 PACK_CONFIG = {
     "standard": {
         "name": "📦 Стандартный пак",
-        "price_coins": 400,
+        "price_coins": 250,
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
@@ -35,7 +35,7 @@ PACK_CONFIG = {
     },
     "rare": {
         "name": "🔵 Редкий пак",
-        "price_coins": 700,
+        "price_coins": 450,
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
@@ -46,8 +46,8 @@ PACK_CONFIG = {
     },
     "epic": {
         "name": "🟣 Эпический пак",
-        "price_coins": 1200,
-        "price_gems": 10,
+        "price_coins": 750,
+        "price_gems": 6,
         "cards_count": 5,
         "rarity_weights": {
             "Common": 5, "Uncommon": 15, "Rare": 30, "Epic": 30,
@@ -58,7 +58,7 @@ PACK_CONFIG = {
     "legendary": {
         "name": "🟡 Легендарный пак",
         "price_coins": 0,
-        "price_gems": 25,
+        "price_gems": 15,
         "cards_count": 5,
         "rarity_weights": {
             "Common": 0, "Uncommon": 5, "Rare": 15, "Epic": 30,
@@ -69,7 +69,7 @@ PACK_CONFIG = {
     "mythic": {
         "name": "🔴 Мифический пак",
         "price_coins": 0,
-        "price_gems": 55,
+        "price_gems": 35,
         "cards_count": 5,
         "rarity_weights": {
             "Common": 0, "Uncommon": 0, "Rare": 5, "Epic": 20,
@@ -79,7 +79,7 @@ PACK_CONFIG = {
     },
     "event": {
         "name": "🎉 Событийный пак",
-        "price_coins": 500,
+        "price_coins": 300,
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
@@ -255,11 +255,24 @@ DROP_COOLDOWN_PREMIUM = 1.5  # 1 час 30 минут
 FARM_COOLDOWN_HOURS = 4      # Кулдаун фарма монет
 FARM_MAX_COINS = 100         # Максимум монет за фарм
 MARKET_FEE_PERCENT = 5       # комиссия торговой площадки %
-MAX_PENDING_TRADE_OFFERS = 20  # лимит одновременных исходящих заявок на обмен у одного игрока
+MAX_PENDING_TRADE_OFFERS = 100  # лимит одновременных исходящих заявок на обмен у одного игрока
 
 # --- УЛУЧШЕНИЕ КАРТ (FUSION) ---
-FUSE_REQUIRED_COPIES = 3       # сколько дублей нужно слить для +1 уровня
-FUSE_LEVEL_BONUS_PERCENT = 20  # бонус к atk/hp за каждый уровень выше 1
+# Раньше для ЛЮБОГО уровня и ЛЮБОЙ редкости требовалось ровно 3 копии и
+# прокачка была бесплатной — слишком легко. Теперь требование копий растёт с
+# каждым уровнем (геометрически) и домножается на коэффициент редкости, плюс
+# появилась денежная цена слияния, растущая так же.
+FUSE_LEVEL_BONUS_PERCENT = 20     # бонус к atk/hp за каждый уровень выше 1
+FUSE_BASE_COPIES = 3              # копий для 1->2 уровня у Common
+FUSE_COPIES_GROWTH = 1.5          # во сколько раз растёт требование копий за уровень
+FUSE_BASE_COST_COINS = 200        # монет за 1->2 уровня у Common
+FUSE_COST_GROWTH = 2.0            # во сколько раз растёт цена за уровень
+FUSE_RARITY_MULTIPLIER = {        # множитель сложности/цены слияния по редкости
+    "Common": 1, "Uncommon": 1.2, "Rare": 1.5, "Epic": 2,
+    "Legendary": 3, "Mythic": 4, "Divine": 6, "Secret": 8, "Limited": 10,
+}
+
+MAX_CARD_STAT = 10_000_000  # жёсткий потолок атаки/HP — выше не растёт ни при каких улучшениях
 
 # --- КЛАНОВЫЕ ВОЙНЫ ---
 # Ставку платит лично лидер (из своих монет, не из казны — иначе только что
@@ -271,12 +284,12 @@ CLAN_WAR_BONUS = 150           # системный бонус в казну п�
 CLAN_WAR_COOLDOWN_HOURS = 6    # кулдаун на клан между войнами (и как атакующий, и как цель)
 
 # --- КАЗНА КЛАНА: ЛИЧНОЕ ПОЛУЧЕНИЕ ---
-# Любой участник клана раз в сутки может забрать себе немного монет из казны,
-# но казна не должна уходить ниже неприкосновенного минимума — иначе казну
-# можно было бы быстро растащить всем составом клана после войны.
-CLAN_WITHDRAW_AMOUNT = 150          # сколько монет можно забрать за раз (раз в сутки)
-CLAN_WITHDRAW_MIN_TREASURY = 1000   # неприкосновенный минимум, который должен остаться в казне
-CLAN_WITHDRAW_COOLDOWN_HOURS = 24   # раз в сутки на каждого участника
+# Любой участник клана может забрать себе немного монет из казны, но казна
+# не должна уходить ниже неприкосновенного минимума — иначе казну можно было
+# бы быстро растащить всем составом клана после войны.
+CLAN_WITHDRAW_AMOUNT = 700           # сколько монет можно забрать за раз
+CLAN_WITHDRAW_MIN_TREASURY = 1000    # неприкосновенный минимум, который должен остаться в казне
+CLAN_WITHDRAW_COOLDOWN_HOURS = 2     # раз в сколько часов на каждого участника
 
 # --- ОДНОРАЗОВЫЙ БОНУС ПРИ ПОКУПКЕ PREMIUM ---
 # Выдаётся один раз навсегда на аккаунт при первой покупке Premium — любым
@@ -301,8 +314,8 @@ STARS_COINS_PACKAGES = [
 # а не случайно
 STARS_CARD_PRICES = {"Common": 10, "Rare": 150, "Epic": 100, "Legendary": 500, "Mythic": 700}
 # (дни Premium, ⭐) — в игре только один уровень подписки (VIP/VIP+ — то же
-# самое, что Premium), поэтому просто два варианта длительности
-STARS_VIP_PACKAGES = [(7, 100), (30, 300)]
+# самое, что Premium). Чем длиннее срок, тем выгоднее цена за день.
+STARS_VIP_PACKAGES = [(7, 70), (30, 200), (90, 350), (180, 600), (365, 1000)]
 
 # --- ДУНХУА ---
 DUNHUA_LIST = [

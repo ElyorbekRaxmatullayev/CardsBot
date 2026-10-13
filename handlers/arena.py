@@ -3,10 +3,11 @@ import time
 
 from telebot import types
 
-from config import BATTLE_WEIGHTS, EVENT_TEXTS, FUSE_LEVEL_BONUS_PERCENT, CLAN_WAR_STAKE, CLAN_WAR_BONUS
+from config import BATTLE_WEIGHTS, EVENT_TEXTS, CLAN_WAR_STAKE, CLAN_WAR_BONUS
 from database import (get_user_data, get_clan_info, get_user_squad, join_queue,
                       leave_queue, find_opponent, update_battle_stats, update_task_progress,
-                      get_clan_war_status, get_clans_for_war, start_clan_war, apply_clan_war_result)
+                      get_clan_war_status, get_clans_for_war, start_clan_war, apply_clan_war_result,
+                      get_effective_stats)
 from loader import bot
 from utils import safe_edit_message, safe_send_message
 
@@ -20,13 +21,13 @@ def arena_main_menu(call):
 
     if user['clan_id']:
         clan = get_clan_info(user['clan_id'])
-        if clan and clan['owner_id'] == user_id:
+        if clan:
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("⚔️ Дуэль", callback_data="arena_duel_mode"))
             markup.add(types.InlineKeyboardButton("🏰 Клановая война", callback_data="arena_clan_war"))
             markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
             safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                              "👑 <b>Приветствую, Лидер!</b>\nВыберите тип сражения:",
+                              f"🏰 <b>Клан: {clan['name']}</b>\nВыберите тип сражения:",
                               reply_markup=markup, parse_mode="HTML")
             return
 
@@ -42,22 +43,24 @@ def _seconds_to_hm(seconds):
     return f"{hours}ч {minutes}мин"
 
 
-def _require_clan_leader(user_id):
-    """Возвращает (clan, error_message). error_message не None, если юзер не лидер клана."""
+def _require_clan_member(user_id):
+    """Возвращает (clan, error_message). error_message не None, если юзер не в клане.
+    Войну теперь может объявить ЛЮБОЙ участник клана (не только лидер) — ставку
+    платит лично тот, кто объявил, а не всегда лидер."""
     user = get_user_data(user_id)
     clan_id = user.get('clan_id') if user else None
     if not clan_id:
         return None, "Вы не состоите в клане."
     clan = get_clan_info(clan_id)
-    if not clan or clan['owner_id'] != user_id:
-        return None, "Клановую войну может объявить только лидер клана."
+    if not clan:
+        return None, "Клан не найден."
     return clan, None
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "arena_clan_war")
 def clan_war_menu(call):
     bot.answer_callback_query(call.id)
-    clan, err = _require_clan_leader(call.from_user.id)
+    clan, err = _require_clan_member(call.from_user.id)
     if err:
         bot.answer_callback_query(call.id, err, show_alert=True)
         return
@@ -67,7 +70,7 @@ def clan_war_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("clan_war_page:"))
 def clan_war_page_cb(call):
     bot.answer_callback_query(call.id)
-    clan, err = _require_clan_leader(call.from_user.id)
+    clan, err = _require_clan_member(call.from_user.id)
     if err:
         bot.answer_callback_query(call.id, err, show_alert=True)
         return
@@ -87,7 +90,8 @@ def _render_clan_war_menu(call, clan, page):
            f"💰 Казна: <b>{clan['coins']}</b>\n"
            f"🏆 Побед в войнах: <b>{clan.get('war_wins', 0) or 0}</b>\n"
            f"{cooldown_txt}\n\n"
-           f"⚔️ Ставка с лидера: <b>{CLAN_WAR_STAKE} 💰</b> (лично, не из казны).\n"
+           f"⚔️ Ставка с вас лично: <b>{CLAN_WAR_STAKE} 💰</b> (не из казны — объявить войну "
+           f"может любой участник клана, платит тот, кто объявил).\n"
            f"Победитель получает обе ставки + {CLAN_WAR_BONUS} 💰 в казну клана.\n\n"
            f"Выберите клан для атаки:")
 
@@ -115,7 +119,7 @@ def _render_clan_war_menu(call, clan, page):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("clan_war_attack:"))
 def clan_war_attack_confirm(call):
     bot.answer_callback_query(call.id)
-    clan, err = _require_clan_leader(call.from_user.id)
+    clan, err = _require_clan_member(call.from_user.id)
     if err:
         bot.answer_callback_query(call.id, err, show_alert=True)
         return
@@ -146,7 +150,7 @@ def clan_war_attack_confirm(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("clan_war_confirm:"))
 def clan_war_confirm(call):
     bot.answer_callback_query(call.id)
-    challenger_clan, err = _require_clan_leader(call.from_user.id)
+    challenger_clan, err = _require_clan_member(call.from_user.id)
     if err:
         bot.answer_callback_query(call.id, err, show_alert=True)
         return
@@ -158,7 +162,7 @@ def clan_war_confirm(call):
         return
 
     success, msg, challenger_id, target_id, challenger_clan, target_clan = start_clan_war(
-        challenger_clan['id'], target_clan_id)
+        call.from_user.id, challenger_clan['id'], target_clan_id)
     if not success:
         bot.answer_callback_query(call.id, msg, show_alert=True)
         return
@@ -249,14 +253,15 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
     p2_squad = get_user_squad(player2_id)
 
     def calc_stats(squad):
-        # Уровень карты после слияния дублей даёт бонус к atk/hp (см. fuse_cards)
+        # Уровень карты после слияния дублей даёт бонус к atk/hp (см. fuse_cards),
+        # с потолком MAX_CARD_STAT на карту (см. get_effective_stats)
         hp = 0
         atk = 0
         for c in squad:
             level = c.get('card_level', 1) or 1
-            mult = 1 + (FUSE_LEVEL_BONUS_PERCENT / 100) * (level - 1)
-            hp += int(c['hp'] * mult)
-            atk += int(c['attack'] * mult)
+            eff_atk, eff_hp = get_effective_stats(c['attack'], c['hp'], level)
+            hp += eff_hp
+            atk += eff_atk
         return hp, atk
 
     p1_hp_max, p1_atk = calc_stats(p1_squad)
@@ -421,9 +426,9 @@ def run_clan_war_battle(challenger_id, challenger_chat_id, challenger_clan, targ
         atk = 0
         for c in squad:
             level = c.get('card_level', 1) or 1
-            mult = 1 + (FUSE_LEVEL_BONUS_PERCENT / 100) * (level - 1)
-            hp += int(c['hp'] * mult)
-            atk += int(c['attack'] * mult)
+            eff_atk, eff_hp = get_effective_stats(c['attack'], c['hp'], level)
+            hp += eff_hp
+            atk += eff_atk
         return hp, atk
 
     p1_hp_max, p1_atk = calc_stats(challenger_squad)

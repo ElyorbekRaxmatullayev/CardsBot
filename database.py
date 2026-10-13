@@ -376,37 +376,25 @@ def leave_queue(user_id):
 
 def find_opponent(user_id):
     """
-    Ищет противника в очереди.
-    Логика: рейтинг +/- 200, не сам юзер.
+    Ищет противника в очереди: сначала близкого по рейтингу (+/-200), и если
+    никого нет — расширяет диапазон вплоть до "кто угодно". На высоком
+    рейтинге одновременно ждущих мало, и узкое окно +/-200 почти никогда
+    никого не находило ("после 2-3к не найти вообще"), хотя единственный
+    ждущий вполне мог стоять чуть за его пределами.
     """
-    # 1. Получаем свой рейтинг
     me = supabase.table("users").select("rating").eq("telegram_id", user_id).execute()
     my_rating = me.data[0]['rating'] if me.data else 1000
 
-    min_r = my_rating - 200
-    max_r = my_rating + 200
-
-    # 2. Ищем в базе
-    # .neq("user_id", user_id) -> не я
-    # .gte("rating", min_r) -> больше или равно мин
-    # .lte("rating", max_r) -> меньше или равно макс
-    # .order("joined_at") -> кто дольше ждет, того берем первым
-    # .limit(1)
-
-    res = supabase.table("arena_queue") \
-        .select("*") \
-        .neq("user_id", user_id) \
-        .gte("rating", min_r) \
-        .lte("rating", max_r) \
-        .order("joined_at") \
-        .limit(1) \
-        .execute()
-
-    if res.data:
-        opponent = res.data[0]
-        # Удаляем противника из очереди, чтобы его не забрал кто-то еще
-        supabase.table("arena_queue").delete().eq("user_id", opponent['user_id']).execute()
-        return opponent['user_id'], opponent.get('chat_id')
+    for band in (200, 500, 1000, None):
+        q = supabase.table("arena_queue").select("*").neq("user_id", user_id)
+        if band is not None:
+            q = q.gte("rating", my_rating - band).lte("rating", my_rating + band)
+        res = q.order("joined_at").limit(1).execute()
+        if res.data:
+            opponent = res.data[0]
+            # Удаляем противника из очереди, чтобы его не забрал кто-то еще
+            supabase.table("arena_queue").delete().eq("user_id", opponent['user_id']).execute()
+            return opponent['user_id'], opponent.get('chat_id')
 
     return None, None
 
@@ -896,27 +884,65 @@ def get_user_rank(user_id):
 
 # --- УЛУЧШЕНИЕ КАРТ (FUSION) ---
 
-def fuse_cards(user_id, card_id, count_required=3):
-    """Объединяет N копий карты для повышения уровня"""
+def get_fuse_requirements(rarity, current_level):
+    """Сколько копий и монет нужно для слияния с current_level на +1.
+    Требование копий растёт геометрически с уровнем (FUSE_COPIES_GROWTH) и
+    домножается на коэффициент редкости — прокачивать топовые карты
+    значительно труднее и дороже, чем Common."""
+    from config import (FUSE_BASE_COPIES, FUSE_COPIES_GROWTH, FUSE_BASE_COST_COINS,
+                        FUSE_COST_GROWTH, FUSE_RARITY_MULTIPLIER)
+    mult = FUSE_RARITY_MULTIPLIER.get(rarity, 1)
+    copies = max(2, round(FUSE_BASE_COPIES * (FUSE_COPIES_GROWTH ** (current_level - 1)) * mult))
+    cost = round(FUSE_BASE_COST_COINS * (FUSE_COST_GROWTH ** (current_level - 1)) * mult)
+    return copies, cost
+
+
+def get_effective_stats(attack, hp, level):
+    """Применяет бонус уровня (от слияния дублей) к атаке/HP карты, с жёстким
+    потолком MAX_CARD_STAT — выше него характеристики не растут ни при каких
+    улучшениях. Общая функция для показа карты и расчёта боя (дуэли/войны
+    кланов), чтобы потолок действовал одинаково везде."""
+    from config import FUSE_LEVEL_BONUS_PERCENT, MAX_CARD_STAT
+    mult = 1 + (FUSE_LEVEL_BONUS_PERCENT / 100) * ((level or 1) - 1)
+    eff_attack = min(int(attack * mult), MAX_CARD_STAT)
+    eff_hp = min(int(hp * mult), MAX_CARD_STAT)
+    return eff_attack, eff_hp
+
+
+def fuse_cards(user_id, card_id):
+    """Объединяет N копий карты + списывает монеты для повышения уровня.
+    N и цена зависят от редкости карты и её текущего уровня — см.
+    get_fuse_requirements. Возвращает (success, new_level_or_error_message)."""
     existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
-    if not existing.data or existing.data[0]['count'] < count_required:
-        return False, f"Нужно минимум {count_required} копии"
+    if not existing.data:
+        return False, "У вас нет этой карты"
     row = existing.data[0]
-    # +1, т.к. слияние объединяет count_required копий в ОДНУ прокачанную —
-    # копия не исчезает, а становится карту уровнем выше. Раньше здесь стояло
-    # без +1, из-за чего при слиянии ровно последних копий count уходил в 0,
-    # хотя игрок формально всё ещё владеет прокачанной картой: она пропадала
-    # из инвентаря/обмена/сквада, потому что везде идёт проверка count > 0.
-    new_count = row['count'] - count_required + 1
     current_level = row.get('card_level', 1) or 1
+
+    card = get_card_by_id(card_id)
+    if not card:
+        return False, "Карта не найдена"
+
+    copies_required, cost = get_fuse_requirements(card['rarity'], current_level)
+
+    if row['count'] < copies_required:
+        return False, f"Нужно минимум {copies_required} копии (у вас {row['count']})"
+
+    if cost > 0 and not update_coins(user_id, -cost):
+        return False, f"Нужно {cost} 💰 на улучшение"
+
+    # +1, т.к. слияние объединяет copies_required копий в ОДНУ прокачанную —
+    # копия не исчезает, а становится картой уровнем выше.
+    new_count = row['count'] - copies_required + 1
     new_level = current_level + 1
 
     # Атомарный клейм по count, который только что прочитали — иначе двойной
-    # клик/автокликер мог бы улучшить карту дважды за одни и те же копии
-    # (списались бы одни и те же 3 копии, но уровень вырос бы на 2).
+    # клик/автокликер мог бы улучшить карту дважды за одни и те же копии.
     claim = supabase.table("user_cards").update({"count": new_count, "card_level": new_level}).eq(
         "id", row['id']).eq("count", row['count']).execute()
     if not claim.count:
+        if cost > 0:
+            update_coins(user_id, cost)  # возвращаем монеты — слияние не состоялось
         return False, "Не удалось улучшить — попробуйте ещё раз"
     return True, new_level
 
@@ -1461,9 +1487,13 @@ def get_clans_for_war(exclude_clan_id, page=0, page_size=8):
     return clans, total
 
 
-def start_clan_war(challenger_clan_id, target_clan_id):
-    """Проверяет условия и списывает ставку с обоих лидеров лично (не из казны —
-    иначе только что созданный клан с пустой казной не смог бы воевать вообще).
+def start_clan_war(initiator_id, challenger_clan_id, target_clan_id):
+    """Проверяет условия и списывает ставку (не из казны — иначе только что
+    созданный клан с пустой казной не смог бы воевать вообще). Ставку со
+    стороны атаки платит лично initiator_id — любой участник клана, который
+    объявил войну (не обязательно лидер, чтобы расходы не ложились всегда
+    на одного человека); со стороны защиты — лидер клана-цели, у него
+    выбора вступать в бой или нет не было.
     Возвращает (success, message, challenger_id, target_id, challenger_clan, target_clan)"""
     from config import CLAN_WAR_STAKE
 
@@ -1483,7 +1513,7 @@ def start_clan_war(challenger_clan_id, target_clan_id):
     if not can_defend:
         return False, "Этот клан недавно уже воевал — сейчас его нельзя атаковать", None, None, None, None
 
-    challenger_id = challenger_clan['owner_id']
+    challenger_id = initiator_id
     target_id = target_clan['owner_id']
 
     if not update_coins(challenger_id, -CLAN_WAR_STAKE):
@@ -1526,7 +1556,7 @@ def get_top_clans_by_war_wins(limit=10):
 
 def get_clan_withdraw_status(user_id):
     """Возвращает (can_withdraw: bool, seconds_left: int) для личного получения
-    монет из казны клана — раз в сутки на участника."""
+    монет из казны клана — раз в CLAN_WITHDRAW_COOLDOWN_HOURS часов на участника."""
     from config import CLAN_WITHDRAW_COOLDOWN_HOURS
     user = get_user_data(user_id)
     if not user:
@@ -1544,9 +1574,9 @@ def get_clan_withdraw_status(user_id):
 
 
 def withdraw_from_clan_treasury(user_id):
-    """Личное получение монет из казны клана (раз в сутки на участника).
-    Казна не может уйти ниже CLAN_WITHDRAW_MIN_TREASURY. Возвращает
-    (success, message_or_amount)."""
+    """Личное получение монет из казны клана (раз в CLAN_WITHDRAW_COOLDOWN_HOURS
+    часов на участника). Казна не может уйти ниже CLAN_WITHDRAW_MIN_TREASURY.
+    Возвращает (success, message_or_amount)."""
     from config import CLAN_WITHDRAW_AMOUNT, CLAN_WITHDRAW_MIN_TREASURY
 
     user = get_user_data(user_id)
@@ -1557,7 +1587,7 @@ def withdraw_from_clan_treasury(user_id):
     if not can_withdraw:
         hours = seconds_left // 3600
         minutes = (seconds_left % 3600) // 60
-        return False, f"Вы уже получали монеты из казны сегодня. Следующая выплата через {hours}ч {minutes}м"
+        return False, f"Вы уже получали монеты из казны недавно. Следующая выплата через {hours}ч {minutes}м"
 
     clan = get_clan_info(user['clan_id'])
     if not clan:

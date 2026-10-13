@@ -2,11 +2,10 @@ import random
 from datetime import datetime, timedelta, timezone
 from telebot import types
 from loader import bot
-from config import RARITY_CONFIG, RARITY_ORDER, FUSE_REQUIRED_COPIES, FUSE_LEVEL_BONUS_PERCENT, \
-    DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM
+from config import RARITY_CONFIG, RARITY_ORDER, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM
 from database import get_all_cards, get_user_data, add_card_to_user, update_last_drop, get_user_inventory, \
     get_user_squad, toggle_squad_member, fuse_cards, is_premium, is_user_banned, update_task_progress, \
-    on_card_obtained, consume_free_draw
+    on_card_obtained, consume_free_draw, get_fuse_requirements, get_effective_stats
 from utils import reply_match
 
 
@@ -107,6 +106,24 @@ def inventory_menu(message, user_id=None):
                 counts[r] += 1  # Считаем +1 за каждую УНИКАЛЬНУЮ карту
                 # Если хочешь считать дубликаты, пиши: counts[r] += c
 
+    # Сначала показываем уже выбранный отряд арены, и только ниже — полный
+    # каталог по редкостям. Раньше тут сразу открывалась вся коллекция, и
+    # чтобы понять, кто уже в отряде, нужно было листать карты по одной.
+    squad = get_user_squad(user_id)
+    if squad:
+        squad_lines = []
+        for c in squad:
+            emoji = RARITY_CONFIG.get(c.get('rarity', ''), {}).get('emoji', '🃏')
+            level = c.get('card_level', 1) or 1
+            lvl_txt = f" (ур. {level})" if level > 1 else ""
+            squad_lines.append(f"{emoji} {c['name']}{lvl_txt}")
+        squad_txt = "\n".join(squad_lines)
+    else:
+        squad_txt = "Пусто — выбери воинов ниже в коллекции."
+
+    txt = (f"🛡 <b>Твой отряд арены</b> ({len(squad)}/5)\n{squad_txt}\n\n"
+           f"📂 <b>Коллекция карт:</b>\nВыбери редкость:")
+
     markup = types.InlineKeyboardMarkup(row_width=2)
     btns = []
     for r in RARITY_ORDER:
@@ -119,8 +136,7 @@ def inventory_menu(message, user_id=None):
     markup.add(*btns)
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
 
-    bot.send_message(message.chat.id, "📂 <b>Коллекция карт:</b>\nВыбери редкость:", reply_markup=markup,
-                     parse_mode="HTML")
+    bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("inv_"))
@@ -149,9 +165,7 @@ def inventory_nav(call):
     item = filtered[index]
     card = item['cards']
     level = item.get('card_level', 1) or 1
-    bonus_mult = 1 + (FUSE_LEVEL_BONUS_PERCENT / 100) * (level - 1)
-    eff_attack = int(card['attack'] * bonus_mult)
-    eff_hp = int(card['hp'] * bonus_mult)
+    eff_attack, eff_hp = get_effective_stats(card['attack'], card['hp'], level)
     stars = " " + "⭐" * (level - 1) if level > 1 else ""
 
     caption = (f"{RARITY_CONFIG[rarity]['emoji']} <b>{card['name']}</b>{stars}\n"
@@ -180,13 +194,17 @@ def inventory_nav(call):
 
     markup.row(squad_btn)  # Добавляем кнопку отряда первой строкой
 
-    # КНОПКА УЛУЧШЕНИЯ (слияние дублей)
-    if item['count'] >= FUSE_REQUIRED_COPIES:
-        fuse_btn = types.InlineKeyboardButton(f"🔀 Улучшить ({item['count']}/{FUSE_REQUIRED_COPIES})",
-                                              callback_data=f"fuse_card:{card['id']}:{rarity}:{index}")
+    # КНОПКА УЛУЧШЕНИЯ (слияние дублей) — требование копий и цена растут с
+    # уровнем и зависят от редкости, см. get_fuse_requirements
+    copies_needed, fuse_cost = get_fuse_requirements(rarity, level)
+    if item['count'] >= copies_needed:
+        fuse_btn = types.InlineKeyboardButton(
+            f"🔀 Улучшить ({item['count']}/{copies_needed}, {fuse_cost}💰)",
+            callback_data=f"fuse_card:{card['id']}:{rarity}:{index}")
     else:
-        fuse_btn = types.InlineKeyboardButton(f"🔀 Улучшить ({item['count']}/{FUSE_REQUIRED_COPIES})",
-                                              callback_data="ignore")
+        fuse_btn = types.InlineKeyboardButton(
+            f"🔀 Улучшить ({item['count']}/{copies_needed}, {fuse_cost}💰)",
+            callback_data="ignore")
     markup.row(fuse_btn)
 
     # Стандартные кнопки навигации
@@ -240,7 +258,7 @@ def handler_fuse_card(call):
     rarity = parts[2]
     index = parts[3]
 
-    success, result = fuse_cards(call.from_user.id, card_id, FUSE_REQUIRED_COPIES)
+    success, result = fuse_cards(call.from_user.id, card_id)
 
     if success:
         update_task_progress(call.from_user.id, "fuse_card", "daily")

@@ -89,10 +89,34 @@ def trade_incoming(call):
             types.InlineKeyboardButton(f"❌ Отклонить", callback_data=f"trade_decline:{offer['id']}:{page}"),
         )
 
+    if total > 1:
+        markup.add(types.InlineKeyboardButton(f"✅ Принять все ({total})", callback_data="trade_accept_all"))
     markup.row(*_page_nav_row("trade_incoming", page, max_page))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_trade"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "trade_accept_all")
+def trade_accept_all(call):
+    # answer_callback_query можно вызвать только один раз на call.id — не
+    # шлём промежуточный ответ, сразу обрабатываем (локальный sqlite, без
+    # сетевых задержек) и отвечаем один раз с итогом
+    user_id = call.from_user.id
+    offers = get_incoming_trades(user_id)
+
+    accepted, failed = 0, 0
+    for offer in offers:
+        success, _ = accept_trade(offer['id'], user_id)
+        if success:
+            accepted += 1
+        else:
+            failed += 1
+
+    bot.answer_callback_query(call.id, f"✅ Принято: {accepted}" + (f", не удалось: {failed}" if failed else ""),
+                              show_alert=True)
+    call.data = "trade_incoming:0"
+    trade_incoming(call)
 
 
 # --- ИСХОДЯЩИЕ ---
