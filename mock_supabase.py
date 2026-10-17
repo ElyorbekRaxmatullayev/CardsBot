@@ -149,27 +149,27 @@ class QueryBuilder:
 
         if self.table == "user_cards" and "cards(*)" in self._select:
             join_clause = "JOIN cards ON user_cards.card_id = cards.id"
-            select_cols = "user_cards.count, user_cards.card_level, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_description, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at"
-        
+            select_cols = "user_cards.count, user_cards.card_level, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_description, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.media_type as c_media_type, cards.created_at as c_created_at"
+
         elif self.table == "user_squads" and "cards(*)" in self._select:
             join_clause = "JOIN cards ON user_squads.card_id = cards.id"
-            select_cols = "user_squads.card_id, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_description, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at"
-        
+            select_cols = "user_squads.card_id, cards.id as c_id, cards.name as c_name, cards.dunhua as c_dunhua, cards.description as c_description, cards.rarity as c_rarity, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.media_type as c_media_type, cards.created_at as c_created_at"
+
         elif self.table == "clan_members" and "users(" in self._select:
             join_clause = "JOIN users ON clan_members.user_id = users.telegram_id"
             select_cols = "clan_members.role, users.first_name as u_first_name, users.telegram_id as u_telegram_id"
-        
+
         elif self.table == "market_listings" and "cards(*)" in self._select and "users!seller_id(first_name)" in self._select:
             join_clause = "JOIN cards ON market_listings.card_id = cards.id JOIN users ON market_listings.seller_id = users.telegram_id"
-            select_cols = "market_listings.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at, users.first_name as u_first_name"
+            select_cols = "market_listings.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.media_type as c_media_type, cards.created_at as c_created_at, users.first_name as u_first_name"
 
         elif self.table == "trade_offers" and "cards!offered_card_id(*)" in self._select and "users!from_user_id(first_name)" in self._select:
             join_clause = "LEFT JOIN cards ON trade_offers.offered_card_id = cards.id JOIN users ON trade_offers.from_user_id = users.telegram_id"
-            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at, users.first_name as u_first_name"
-            
+            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.media_type as c_media_type, cards.created_at as c_created_at, users.first_name as u_first_name"
+
         elif self.table == "trade_offers" and "cards!offered_card_id(*)" in self._select and "users!to_user_id(first_name)" in self._select:
             join_clause = "LEFT JOIN cards ON trade_offers.offered_card_id = cards.id JOIN users ON trade_offers.to_user_id = users.telegram_id"
-            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.created_at as c_created_at, users.first_name as u_first_name"
+            select_cols = "trade_offers.*, cards.id as c_id, cards.name as c_name, cards.rarity as c_rarity, cards.dunhua as c_dunhua, cards.description as c_description, cards.attack as c_attack, cards.hp as c_hp, cards.value as c_value, cards.image_file_id as c_image_file_id, cards.media_type as c_media_type, cards.created_at as c_created_at, users.first_name as u_first_name"
             
         elif self.table == "users" and self._select == "first_name, battles_won, battles_total":
              select_cols = "first_name, battles_won, battles_total"

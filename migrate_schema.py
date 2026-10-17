@@ -52,6 +52,7 @@ EXTRA_COLUMNS = {
     ],
     "cards": [
         ("stars_price", "INTEGER"),
+        ("media_type", "TEXT DEFAULT 'photo'"),
     ],
     "trade_offers": [
         ("offered_card_quantity", "INTEGER DEFAULT 1"),

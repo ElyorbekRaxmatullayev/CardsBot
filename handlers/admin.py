@@ -293,22 +293,28 @@ def step_stats(message, data):
 
 def step_description(message, data):
     data['description'] = message.text.strip()
-    msg = bot.send_message(message.chat.id, "📷 Пришли <b>фото</b> карты:", parse_mode="HTML")
+    msg = bot.send_message(message.chat.id, "📷 Пришли <b>фото или видео</b> карты:", parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, message.from_user.id, step_photo, data)
 
 
 def step_photo(message, data):
     if message.photo:
         data['image_file_id'] = message.photo[-1].file_id
-        add_new_card_to_db(data)
-        bot.send_message(message.chat.id,
-                         f"✅ <b>Карта сохранена!</b>\n\n"
-                         f"🃏 {data['name']} ({data.get('dunhua', '?')})\n"
-                         f"⭐️ {data['rarity']} | ⚔️{data['attack']} ❤️{data['hp']}",
-                         reply_markup=_adm_back_markup(), parse_mode="HTML")
+        data['media_type'] = 'photo'
+    elif message.video:
+        data['image_file_id'] = message.video.file_id
+        data['media_type'] = 'video'
     else:
-        msg = bot.send_message(message.chat.id, "❌ Нужно отправить фото!")
+        msg = bot.send_message(message.chat.id, "❌ Нужно отправить фото или видео!")
         register_next_step_handler_for_user(bot, msg, message.from_user.id, step_photo, data)
+        return
+
+    add_new_card_to_db(data)
+    bot.send_message(message.chat.id,
+                     f"✅ <b>Карта сохранена!</b>\n\n"
+                     f"🃏 {data['name']} ({data.get('dunhua', '?')})\n"
+                     f"⭐️ {data['rarity']} | ⚔️{data['attack']} ❤️{data['hp']}",
+                     reply_markup=_adm_back_markup(), parse_mode="HTML")
 
 
 # --- СПИСОК / ПРОСМОТР / РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ КАРТ ---
@@ -399,7 +405,10 @@ def adm_card_view(call):
 
     if card.get('image_file_id'):
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_photo(call.message.chat.id, card['image_file_id'], caption=txt, reply_markup=markup, parse_mode="HTML")
+        if card.get('media_type') == 'video':
+            bot.send_video(call.message.chat.id, card['image_file_id'], caption=txt, reply_markup=markup, parse_mode="HTML")
+        else:
+            bot.send_photo(call.message.chat.id, card['image_file_id'], caption=txt, reply_markup=markup, parse_mode="HTML")
     else:
         safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
                           reply_markup=markup, parse_mode="HTML")
@@ -495,15 +504,19 @@ def edit_step_stats(message, card_id, page, data):
 def edit_step_description(message, card_id, page, data):
     if message.text.strip() != '-':
         data['description'] = message.text.strip()
-    msg = bot.send_message(message.chat.id, "📷 Новое <b>фото</b> (или «-», чтобы оставить прежнее):", parse_mode="HTML")
+    msg = bot.send_message(message.chat.id, "📷 Новое <b>фото или видео</b> (или «-», чтобы оставить прежнее):", parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, message.from_user.id, edit_step_photo, card_id, page, data)
 
 
 def edit_step_photo(message, card_id, page, data):
     if message.photo:
         data['image_file_id'] = message.photo[-1].file_id
+        data['media_type'] = 'photo'
+    elif message.video:
+        data['image_file_id'] = message.video.file_id
+        data['media_type'] = 'video'
     elif not (message.text and message.text.strip() == '-'):
-        msg = bot.send_message(message.chat.id, "❌ Пришли фото или «-»:")
+        msg = bot.send_message(message.chat.id, "❌ Пришли фото, видео или «-»:")
         register_next_step_handler_for_user(bot, msg, message.from_user.id, edit_step_photo, card_id, page, data)
         return
 

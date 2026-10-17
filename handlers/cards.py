@@ -75,7 +75,10 @@ def handler_get_card(message):
         caption += f"\n🎁 Бесплатное получение (осталось: {remaining})"
 
     if card['image_file_id']:
-        bot.send_photo(message.chat.id, card['image_file_id'], caption=caption, parse_mode="HTML")
+        if card.get('media_type') == 'video':
+            bot.send_video(message.chat.id, card['image_file_id'], caption=caption, parse_mode="HTML")
+        else:
+            bot.send_photo(message.chat.id, card['image_file_id'], caption=caption, parse_mode="HTML")
     else:
         bot.send_message(message.chat.id, caption, parse_mode="HTML")
 
@@ -220,14 +223,24 @@ def inventory_nav(call):
     try:
         if not card.get('image_file_id'):
             raise ValueError("card has no image_file_id")
-        media = types.InputMediaPhoto(card['image_file_id'], caption=caption, parse_mode="HTML")
+        is_video = card.get('media_type') == 'video'
+        # edit_message_media умеет менять фото на видео и обратно, НО только
+        # если ему передать InputMedia правильного типа под НОВУЮ карту —
+        # раньше тут всегда строился InputMediaPhoto, и переключение со
+        # следующей/предыдущей карты на видео падало с ошибкой API.
+        media = (types.InputMediaVideo(card['image_file_id'], caption=caption, parse_mode="HTML") if is_video
+                else types.InputMediaPhoto(card['image_file_id'], caption=caption, parse_mode="HTML"))
         if action == "inv_nav":
             bot.edit_message_media(media=media, chat_id=call.message.chat.id, message_id=call.message.message_id,
                                    reply_markup=markup)
         else:
             bot.delete_message(call.message.chat.id, call.message.message_id)
-            bot.send_photo(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
-                           parse_mode="HTML")
+            if is_video:
+                bot.send_video(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
+                               parse_mode="HTML")
+            else:
+                bot.send_photo(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
+                               parse_mode="HTML")
     except Exception as e:
         # Раньше тут было голое except: bot.answer_callback_query(call.id) —
         # при любой ошибке (например у карты нет/битый image_file_id) экран

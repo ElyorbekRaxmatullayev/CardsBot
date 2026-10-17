@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS cards (
     value INTEGER DEFAULT 10,
     image_file_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    stars_price INTEGER
+    stars_price INTEGER,
+    media_type TEXT DEFAULT 'photo'
 );
 
 -- 3. USER_CARDS
