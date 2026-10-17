@@ -151,8 +151,11 @@ def inventory_nav(call):
 
     rarity = parts[1]
     inv_data = get_user_inventory(call.from_user.id).data
-    # Фильтруем
-    filtered = [i for i in inv_data if i['cards']['rarity'] == rarity]
+    # Фильтруем. i.get('cards') может быть пустым — "призрачная" строка
+    # user_cards на уже удалённую карту (если миграция чистки призраков ещё
+    # не прогонялась на этой базе); без проверки i['cards']['rarity'] падало
+    # необработанным исключением, и экран редкости просто не открывался.
+    filtered = [i for i in inv_data if i.get('cards') and i['cards'].get('rarity') == rarity]
 
     if not filtered:
         bot.answer_callback_query(call.id, "Пусто!", show_alert=True)
@@ -166,9 +169,8 @@ def inventory_nav(call):
     card = item['cards']
     level = item.get('card_level', 1) or 1
     eff_attack, eff_hp = get_effective_stats(card['attack'], card['hp'], level)
-    stars = " " + "⭐" * (level - 1) if level > 1 else ""
 
-    caption = (f"{RARITY_CONFIG[rarity]['emoji']} <b>{card['name']}</b>{stars}\n"
+    caption = (f"{RARITY_CONFIG[rarity]['emoji']} <b>{card['name']}</b>\n"
                f"⚔️ {eff_attack} | ❤️ {eff_hp}\n"
                f"🔺 Уровень: {level}\n"
                f"📦 В наличии: {item['count']}\n"
@@ -215,9 +217,10 @@ def inventory_nav(call):
     )
     markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="inv_back_main"))
 
-    media = types.InputMediaPhoto(card['image_file_id'], caption=caption, parse_mode="HTML")
-
     try:
+        if not card.get('image_file_id'):
+            raise ValueError("card has no image_file_id")
+        media = types.InputMediaPhoto(card['image_file_id'], caption=caption, parse_mode="HTML")
         if action == "inv_nav":
             bot.edit_message_media(media=media, chat_id=call.message.chat.id, message_id=call.message.message_id,
                                    reply_markup=markup)
@@ -225,8 +228,17 @@ def inventory_nav(call):
             bot.delete_message(call.message.chat.id, call.message.message_id)
             bot.send_photo(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
                            parse_mode="HTML")
-    except:
-        bot.answer_callback_query(call.id)
+    except Exception as e:
+        # Раньше тут было голое except: bot.answer_callback_query(call.id) —
+        # при любой ошибке (например у карты нет/битый image_file_id) экран
+        # просто молча не открывался, без единой подсказки, что пошло не так.
+        # Теперь логируем и гарантированно показываем карту хотя бы текстом.
+        print(f"Error showing card in inventory (card_id={card.get('id')}): {e}")
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        bot.send_message(call.message.chat.id, caption, reply_markup=markup, parse_mode="HTML")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("squad_toggle:"))

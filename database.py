@@ -74,6 +74,53 @@ def add_card_to_user(user_id, card_id):
         return False, 1
 
 
+def add_cards_to_user(user_id, card_id, amount):
+    """Как add_card_to_user, но сразу на amount копий за один SELECT+UPDATE,
+    а не amount отдельных раундов — для массового начисления (напр. "Открыть
+    всё" на сотнях паков разом), иначе такой массовый дроп крайне медленный.
+    Возвращает (is_new: bool, new_count)."""
+    existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
+    if existing.data:
+        new_count = existing.data[0]['count'] + amount
+        supabase.table("user_cards").update({"count": new_count}).eq("id", existing.data[0]['id']).execute()
+        return False, new_count
+    else:
+        supabase.table("user_cards").insert({"user_id": user_id, "card_id": card_id, "count": amount}).execute()
+        return True, amount
+
+
+def on_cards_obtained_bulk(user_id, rarity_counts, new_card_count):
+    """Пакетная версия on_card_obtained — одна запись прогресса на тип
+    задания/счётчика вместо одной на каждую отдельную карту. rarity_counts:
+    {rarity: сколько карт этой редкости выпало}. new_card_count: сколько ИЗ
+    НИХ карт были новыми для коллекции игрока (а не дублями)."""
+    rarity_task_id = {'Rare': 'get_rare', 'Epic': 'get_epic', 'Legendary': 'get_legendary', 'Mythic': 'get_mythic'}
+    total = sum(rarity_counts.values())
+
+    for period in ("daily", "weekly"):
+        if total:
+            update_task_progress(user_id, "get_card", period, increment=total)
+        if new_card_count:
+            update_task_progress(user_id, "new_card", period, increment=new_card_count)
+        for rarity, task_id in rarity_task_id.items():
+            cnt = rarity_counts.get(rarity, 0)
+            if cnt:
+                update_task_progress(user_id, task_id, period, increment=cnt)
+
+    if not total:
+        return
+    user = get_user_data(user_id)
+    if not user:
+        return
+    updates = {"total_cards_obtained": (user.get('total_cards_obtained') or 0) + total}
+    for rarity, field in (("Legendary", "total_legendary_obtained"), ("Mythic", "total_mythic_obtained"),
+                          ("Epic", "total_epic_obtained")):
+        cnt = rarity_counts.get(rarity, 0)
+        if cnt:
+            updates[field] = (user.get(field) or 0) + cnt
+    supabase.table("users").update(updates).eq("telegram_id", user_id).execute()
+
+
 def on_card_obtained(user_id, card, is_dup):
     rarity = card.get('rarity')
     rarity_task_id = {
@@ -1057,15 +1104,34 @@ def add_admin(user_id, role='admin', added_by=None):
     return True
 
 
-def remove_admin(user_id):
-    """Снимает права админа. Гл. Администратора снять нельзя (в том числе другим
-    Гл. Администратором) — только обычного 'admin'."""
-    role = get_admin_role(user_id)
+def remove_admin(acting_user_id, target_user_id):
+    """Снимает права админа. Правила:
+    - Обычного 'admin' может снять любой Гл. Администратор.
+    - Гл. Администратора может снять владелец бота (бутстрап ADMIN_ID из
+      .env) — всегда, кого угодно; либо тот Гл. Администратор, который
+      ЛИЧНО его назначил (added_by == acting_user_id). "Чужого" (назначенного
+      кем-то другим) Гл. Администратора снять нельзя — иначе любой Гл.
+      Администратор мог бы убрать вообще любого другого.
+    - Владельца бота снять нельзя никому, в том числе ему самому.
+    - Самого себя снять нельзя."""
+    from config import ADMIN_ID
+
+    if acting_user_id == target_user_id:
+        return False, "Нельзя снять самого себя"
+    if target_user_id == ADMIN_ID:
+        return False, "Нельзя снять владельца бота"
+
+    role = get_admin_role(target_user_id)
     if role is None:
         return False, "Этот пользователь не админ"
-    if role == 'head':
-        return False, "Нельзя снять Гл. Администратора"
-    supabase.table("admins").delete().eq("telegram_id", user_id).execute()
+
+    if role == 'head' and acting_user_id != ADMIN_ID:
+        target_row = supabase.table("admins").select("added_by").eq("telegram_id", target_user_id).execute()
+        added_by = target_row.data[0].get('added_by') if target_row.data else None
+        if added_by != acting_user_id:
+            return False, "Вы можете снимать только тех Гл. Администраторов, которых назначили лично"
+
+    supabase.table("admins").delete().eq("telegram_id", target_user_id).execute()
     return True, "Права админа сняты"
 
 

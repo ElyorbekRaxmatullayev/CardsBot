@@ -12,7 +12,7 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
                       toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids,
-                      set_card_stars_price)
+                      set_card_stars_price, grant_premium)
 from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
@@ -57,6 +57,9 @@ def admin_start(message, user_id=None):
     )
     markup.row(
         types.InlineKeyboardButton("🎴 Выдать карту", callback_data="adm_give_card"),
+        types.InlineKeyboardButton("🌟 Выдать Premium", callback_data="adm_give_premium"),
+    )
+    markup.row(
         types.InlineKeyboardButton("👤 Игроки", callback_data="adm_users"),
     )
     markup.row(
@@ -343,8 +346,16 @@ def adm_cards_list(call):
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="adm_back"))
 
     txt = f"📚 <b>Карты в базе</b> (всего: {total})"
-    safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
-                      reply_markup=markup, parse_mode="HTML")
+    if call.message.photo:
+        # Сюда можно попасть с кнопки "К списку" на карточке карты — та
+        # отрисована как фото-сообщение, а edit_message_text (внутри
+        # safe_edit_message) не может превратить фото-сообщение в текстовое,
+        # просто молча падает с ошибкой — поэтому тут удаляем и шлём заново
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.send_message(call.message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+    else:
+        safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
+                          reply_markup=markup, parse_mode="HTML")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_card_view:"))
@@ -622,6 +633,38 @@ def _give_gems_step(message):
                          reply_markup=_adm_back_markup())
 
 
+# --- ВЫДАЧА PREMIUM ---
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_give_premium")
+def adm_give_premium_start(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id,
+                           "🌟 Введи: <b>USER_ID ДНЕЙ</b>\nПример: <code>123456789 30</code>",
+                           parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _give_premium_step)
+
+
+def _give_premium_step(message):
+    try:
+        parts = message.text.strip().split()
+        uid, days = int(parts[0]), int(parts[1])
+        if days <= 0:
+            raise ValueError
+        user = get_user_data(uid)
+        if not user:
+            bot.send_message(message.chat.id, "❌ Пользователь не найден.", reply_markup=_adm_back_markup())
+            return
+        grant_premium(uid, days)
+        bot.send_message(message.chat.id,
+                         f"✅ Выдан <b>Premium на {days} дн.</b> пользователю <b>{user['first_name']}</b>",
+                         reply_markup=_adm_back_markup(), parse_mode="HTML")
+    except (ValueError, IndexError):
+        bot.send_message(message.chat.id, "❌ Ошибка. Формат: USER_ID ДНЕЙ (целое число дней)",
+                         reply_markup=_adm_back_markup())
+
+
 # --- ВЫДАЧА КАРТЫ (по голому ID) ---
 
 @bot.callback_query_handler(func=lambda call: call.data == "adm_give_card")
@@ -818,6 +861,7 @@ def adm_admins_menu(call):
     txt = "👑 <b>Администраторы</b>\n➖➖➖➖➖➖➖➖\n\n"
     markup = types.InlineKeyboardMarkup(row_width=1)
 
+    viewer_id = call.from_user.id
     for a in admins:
         uid = a['telegram_id']
         role = a.get('role') or 'admin'
@@ -825,8 +869,14 @@ def adm_admins_menu(call):
         name = user['first_name'] if user else str(uid)
         note = " <i>(из .env)</i>" if uid == ADMIN_ID else ""
         txt += f"• {name} (<code>{uid}</code>) — {_role_label(role)}{note}\n"
-        # Гл. Администратора снять нельзя — ни другим, ни даже самим собой
-        if role != 'head':
+
+        # Владельца бота и себя самого снимать нельзя никому. Обычного
+        # 'admin' может снять любой Гл. Администратор. Гл. Администратора
+        # может снять только владелец или тот, кто его лично назначил.
+        can_remove = uid != ADMIN_ID and uid != viewer_id and (
+            role != 'head' or viewer_id == ADMIN_ID or a.get('added_by') == viewer_id
+        )
+        if can_remove:
             markup.add(types.InlineKeyboardButton(f"🗑 Убрать {name}", callback_data=f"adm_admin_del:{uid}"))
 
     if ADMIN_ID not in admin_ids:
@@ -902,7 +952,7 @@ def adm_admin_del(call):
     if not is_head_admin(call.from_user.id):
         return
     uid = int(call.data.split(":")[1])
-    success, msg = remove_admin(uid)
+    success, msg = remove_admin(call.from_user.id, uid)
     bot.answer_callback_query(call.id, ("🗑 " if success else "❌ ") + msg, show_alert=True)
     adm_admins_menu(call)
 

@@ -6,16 +6,22 @@ from config import PACK_CONFIG, RARITY_CONFIG, RARITY_ORDER
 from database import (get_user_data, update_coins, update_gems,
                       add_card_to_user, get_all_cards, add_pack_to_user,
                       get_user_packs, use_pack, use_all_packs, increment_packs_opened,
-                      update_task_progress, on_card_obtained)
+                      update_task_progress, on_card_obtained,
+                      add_cards_to_user, on_cards_obtained_bulk)
 from loader import bot
 from utils import safe_send_message, safe_edit_message
 
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
-def drop_card_by_weights(weights: dict):
-    """Выбирает карту с учётом весов редкости пака"""
-    all_cards = get_all_cards()
+def drop_card_by_weights(weights: dict, all_cards=None):
+    """Выбирает карту с учётом весов редкости пака. all_cards можно передать
+    заранее (список карт не меняется за время одного открытия) — иначе при
+    открытии сразу многих паков каждый бы дроп заново ходил в базу за полным
+    каталогом карт, что и делало "Открыть всё" на сотнях паков крайне
+    медленным."""
+    if all_cards is None:
+        all_cards = get_all_cards()
     if not all_cards:
         return None
     filtered = {r: [c for c in all_cards if c['rarity'] == r] for r in weights if weights[r] > 0}
@@ -216,15 +222,32 @@ def pack_open_all(call):
         bot.answer_callback_query(call.id, "У вас нет этого пака!", show_alert=True)
         return
 
-    # Открываем все паки сразу
-    cards = []
+    # Открываем все паки сразу. При сотнях паков покарточная обработка (один
+    # SELECT+UPDATE на КАЖДУЮ карту плюс несколько запросов в on_card_obtained
+    # на каждую же) — это тысячи запросов к базе и ощутимое зависание, из-за
+    # которого "Открыть всё" выглядело как "вообще не работает". Поэтому
+    # сначала считаем дропы в памяти, потом пишем в базу одним запросом на
+    # КАЖДУЮ УНИКАЛЬНУЮ карту (а не на каждую выпавшую копию).
     weights = cfg.get('rarity_weights', {})
+    all_cards = get_all_cards() or []
+    drop_counts = {}  # card_id -> сколько раз выпала
+    cards_by_id = {}
     for _ in range(packs_claimed * cfg['cards_count']):
-        card = drop_card_by_weights(weights)
+        card = drop_card_by_weights(weights, all_cards=all_cards)
         if card:
-            is_dup, _ = add_card_to_user(user_id, card['id'])
-            on_card_obtained(user_id, card, is_dup)
-            cards.append(card)
+            drop_counts[card['id']] = drop_counts.get(card['id'], 0) + 1
+            cards_by_id[card['id']] = card
+
+    rarity_counts = {}
+    new_card_count = 0
+    for card_id, amount in drop_counts.items():
+        card = cards_by_id[card_id]
+        is_new, _ = add_cards_to_user(user_id, card_id, amount)
+        if is_new:
+            new_card_count += 1
+        rarity_counts[card['rarity']] = rarity_counts.get(card['rarity'], 0) + amount
+
+    on_cards_obtained_bulk(user_id, rarity_counts, new_card_count)
 
     # Обновляем счётчики заданий разом на всё количество открытых паков
     increment_packs_opened(user_id, count=packs_claimed)
@@ -234,14 +257,12 @@ def pack_open_all(call):
 
     # При открытии сразу многих паков список карт по одной может быть очень
     # длинным (лимит сообщения Telegram) — показываем сводку по редкости
-    rarity_counts = {}
-    for card in cards:
-        rarity_counts[card['rarity']] = rarity_counts.get(card['rarity'], 0) + 1
+    total_dropped = sum(rarity_counts.values())
 
     user_mention = f"@{call.from_user.username}" if call.from_user.username else f"<b>{call.from_user.first_name}</b>"
     txt = (f"🎴 {user_mention} открыл <b>{packs_claimed}x {cfg['name']}</b>\n"
            f"➖➖➖➖➖➖➖➖\n\n"
-           f"Получено карт: <b>{len(cards)}</b>\n\n")
+           f"Получено карт: <b>{total_dropped}</b>\n\n")
     for rarity in RARITY_ORDER:
         if rarity in rarity_counts:
             r_cfg = RARITY_CONFIG.get(rarity, {})
