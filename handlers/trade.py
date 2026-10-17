@@ -83,7 +83,9 @@ def trade_incoming(call):
         card = offer.get('cards') or {}
         from_name = (offer.get('users') or {}).get('first_name', 'Неизвестно')
         emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
-        txt += f"От: <b>{from_name}</b>\nКарта: {emoji} <b>{card.get('name', '?')}</b>\n\n"
+        qty = offer.get('offered_card_quantity') or 1
+        qty_txt = f" x{qty}" if qty > 1 else ""
+        txt += f"От: <b>{from_name}</b>\nКарта: {emoji} <b>{card.get('name', '?')}</b>{qty_txt}\n\n"
         markup.row(
             types.InlineKeyboardButton(f"✅ Принять #{offer['id']}", callback_data=f"trade_accept:{offer['id']}:{page}"),
             types.InlineKeyboardButton(f"❌ Отклонить", callback_data=f"trade_decline:{offer['id']}:{page}"),
@@ -139,7 +141,9 @@ def trade_outgoing(call):
             card = offer.get('cards') or {}
             to_name = (offer.get('users') or {}).get('first_name', 'Неизвестно')
             emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
-            txt += f"Кому: <b>{to_name}</b>\nКарта: {emoji} <b>{card.get('name', '?')}</b>\nСтатус: ⏳ Ожидание\n\n"
+            qty = offer.get('offered_card_quantity') or 1
+            qty_txt = f" x{qty}" if qty > 1 else ""
+            txt += f"Кому: <b>{to_name}</b>\nКарта: {emoji} <b>{card.get('name', '?')}</b>{qty_txt}\nСтатус: ⏳ Ожидание\n\n"
         markup.row(*_page_nav_row("trade_outgoing", page, max_page))
 
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_trade"))
@@ -271,14 +275,76 @@ def trade_pick_page_cb(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trade_select_card:"))
 def trade_select_card(call):
+    bot.answer_callback_query(call.id)
     parts = call.data.split(":")
     card_id = int(parts[1])
     target_id = int(parts[2])
     user_id = call.from_user.id
 
-    trade_id, err = create_trade_offer(user_id, target_id, card_id)
+    inv_res = get_user_inventory(user_id)
+    item = next((i for i in (inv_res.data or [])
+                if i.get('cards') and i['cards'].get('id') == card_id), None)
+    have = item['count'] if item else 0
+    if have < 1:
+        bot.answer_callback_query(call.id, "У вас больше нет этой карты", show_alert=True)
+        return
+
+    state = _trade_state.setdefault(user_id, {})
+    state['card_id'] = card_id
+    state['target_id'] = target_id
+
+    if have == 1:
+        # Нечего выбирать — сразу предлагаем единственную копию
+        _finalize_trade_offer(call.message.chat.id, user_id, target_id, card_id, 1)
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("1 шт", callback_data=f"trade_qty:{card_id}:{target_id}:1"),
+        types.InlineKeyboardButton(f"Все ({have})", callback_data=f"trade_qty:{card_id}:{target_id}:{have}"),
+    )
+    markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="menu_trade"))
+    msg = bot.send_message(call.message.chat.id,
+                           f"🔢 Сколько копий этой карты отдать? (у вас {have})\n"
+                           f"Выберите кнопкой или введите число:\n\nОтмена — /cancel",
+                           reply_markup=markup)
+    register_next_step_handler_for_user(bot, msg, user_id, _trade_qty_text_step, card_id, target_id, have)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("trade_qty:"))
+def trade_qty_cb(call):
+    bot.answer_callback_query(call.id)
+    _, card_id, target_id, qty = call.data.split(":")
+    user_id = call.from_user.id
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+    _finalize_trade_offer(call.message.chat.id, user_id, int(target_id), int(card_id), int(qty))
+
+
+def _trade_qty_text_step(message, card_id, target_id, have):
+    user_id = message.from_user.id
+    if message.text == '/cancel':
+        _trade_state.pop(user_id, None)
+        bot.send_message(message.chat.id, "Отменено.")
+        return
+    try:
+        qty = int(message.text.strip())
+        if qty < 1 or qty > have:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, f"❌ Введите целое число от 1 до {have}:")
+        register_next_step_handler_for_user(bot, msg, user_id, _trade_qty_text_step, card_id, target_id, have)
+        return
+    _finalize_trade_offer(message.chat.id, user_id, target_id, card_id, qty)
+
+
+def _finalize_trade_offer(chat_id, user_id, target_id, card_id, quantity):
+    trade_id, err = create_trade_offer(user_id, target_id, card_id, quantity=quantity)
     if trade_id:
-        bot.answer_callback_query(call.id, "✅ Предложение отправлено!", show_alert=True)
+        qty_txt = f" (x{quantity})" if quantity > 1 else ""
+        bot.send_message(chat_id, f"✅ Предложение отправлено{qty_txt}!")
         # Уведомляем получателя
         try:
             bot.send_message(target_id,
@@ -286,10 +352,9 @@ def trade_select_card(call):
                              f"Игрок предлагает вам обмен картой.\n"
                              f"Откройте раздел 🤝 Обмен → Входящие предложения.",
                              parse_mode="HTML")
-        except:
+        except Exception:
             pass
     else:
-        bot.answer_callback_query(call.id, err or "❌ Ошибка создания обмена", show_alert=True)
+        bot.send_message(chat_id, f"❌ Ошибка: {err or 'не удалось создать обмен'}")
 
     _trade_state.pop(user_id, None)
-    trade_menu(call)

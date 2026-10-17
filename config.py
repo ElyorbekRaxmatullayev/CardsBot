@@ -6,15 +6,18 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
+# Шансы верхних редкостей (Legendary и выше) снижены — раньше они выпадали
+# слишком часто и переставали ощущаться особенными. Common/Uncommon/Rare/Epic
+# не трогали, освободившийся вес ушёл в Common.
 RARITY_CONFIG = {
-    "Common":    {"chance": 55,   "emoji": "⚪️", "ru": "Обычная",      "value": 10,    "color": "grey"},
+    "Common":    {"chance": 56.6, "emoji": "⚪️", "ru": "Обычная",      "value": 10,    "color": "grey"},
     "Uncommon":  {"chance": 25,   "emoji": "🟢", "ru": "Необычная",    "value": 25,    "color": "green"},
     "Rare":      {"chance": 12,   "emoji": "🔵", "ru": "Редкая",       "value": 60,    "color": "blue"},
     "Epic":      {"chance": 5,    "emoji": "🟣", "ru": "Эпическая",    "value": 200,   "color": "purple"},
-    "Legendary": {"chance": 2,    "emoji": "🟡", "ru": "Легендарная",  "value": 600,   "color": "gold"},
-    "Mythic":    {"chance": 0.7,  "emoji": "🔴", "ru": "Мифическая",   "value": 1500,  "color": "red"},
-    "Divine":    {"chance": 0.25, "emoji": "🌟", "ru": "Божественная", "value": 5000,  "color": "white"},
-    "Secret":    {"chance": 0.05, "emoji": "💎", "ru": "Секретная",    "value": 15000, "color": "diamond"},
+    "Legendary": {"chance": 1,    "emoji": "🟡", "ru": "Легендарная",  "value": 600,   "color": "gold"},
+    "Mythic":    {"chance": 0.3,  "emoji": "🔴", "ru": "Мифическая",   "value": 1500,  "color": "red"},
+    "Divine":    {"chance": 0.08, "emoji": "🌟", "ru": "Божественная", "value": 5000,  "color": "white"},
+    "Secret":    {"chance": 0.02, "emoji": "💎", "ru": "Секретная",    "value": 15000, "color": "diamond"},
     "Limited":   {"chance": 0,    "emoji": "🎴", "ru": "Лимитная",     "value": 10000, "color": "limited"},
 }
 
@@ -28,8 +31,8 @@ PACK_CONFIG = {
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
-            "Common": 55, "Uncommon": 25, "Rare": 12, "Epic": 5,
-            "Legendary": 2, "Mythic": 0.7, "Divine": 0.25, "Secret": 0.05,
+            "Common": 56.6, "Uncommon": 25, "Rare": 12, "Epic": 5,
+            "Legendary": 1, "Mythic": 0.3, "Divine": 0.08, "Secret": 0.02,
         },
         "description": "3 случайные карты"
     },
@@ -39,8 +42,8 @@ PACK_CONFIG = {
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
-            "Common": 20, "Uncommon": 30, "Rare": 30, "Epic": 12,
-            "Legendary": 5, "Mythic": 2, "Divine": 0.8, "Secret": 0.2,
+            "Common": 20, "Uncommon": 30, "Rare": 34.3, "Epic": 12,
+            "Legendary": 2.5, "Mythic": 0.8, "Divine": 0.3, "Secret": 0.08,
         },
         "description": "3 карты с шансом Rare+"
     },
@@ -50,8 +53,8 @@ PACK_CONFIG = {
         "price_gems": 6,
         "cards_count": 5,
         "rarity_weights": {
-            "Common": 5, "Uncommon": 15, "Rare": 30, "Epic": 30,
-            "Legendary": 12, "Mythic": 5, "Divine": 2, "Secret": 1,
+            "Common": 5, "Uncommon": 15, "Rare": 30, "Epic": 41,
+            "Legendary": 6, "Mythic": 2, "Divine": 0.7, "Secret": 0.3,
         },
         "description": "5 карт — гарант Epic+"
     },
@@ -62,7 +65,7 @@ PACK_CONFIG = {
         "cards_count": 5,
         "rarity_weights": {
             "Common": 0, "Uncommon": 5, "Rare": 15, "Epic": 30,
-            "Legendary": 30, "Mythic": 12, "Divine": 5, "Secret": 3,
+            "Legendary": 41, "Mythic": 6, "Divine": 2, "Secret": 1,
         },
         "description": "5 карт — гарант Legendary+"
     },
@@ -73,7 +76,7 @@ PACK_CONFIG = {
         "cards_count": 5,
         "rarity_weights": {
             "Common": 0, "Uncommon": 0, "Rare": 5, "Epic": 20,
-            "Legendary": 35, "Mythic": 25, "Divine": 10, "Secret": 5,
+            "Legendary": 54.5, "Mythic": 15, "Divine": 4, "Secret": 1.5,
         },
         "description": "5 карт — гарант Mythic+"
     },
@@ -83,8 +86,8 @@ PACK_CONFIG = {
         "price_gems": 0,
         "cards_count": 3,
         "rarity_weights": {
-            "Common": 30, "Uncommon": 25, "Rare": 20, "Epic": 12,
-            "Legendary": 7, "Mythic": 3, "Divine": 1.5, "Secret": 0.5, "Limited": 1,
+            "Common": 36.15, "Uncommon": 25, "Rare": 20, "Epic": 12,
+            "Legendary": 4, "Mythic": 1.2, "Divine": 0.5, "Secret": 0.15, "Limited": 1,
         },
         "description": "3 карты с шансом Limited"
     },

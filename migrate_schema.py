@@ -53,6 +53,9 @@ EXTRA_COLUMNS = {
     "cards": [
         ("stars_price", "INTEGER"),
     ],
+    "trade_offers": [
+        ("offered_card_quantity", "INTEGER DEFAULT 1"),
+    ],
 }
 
 

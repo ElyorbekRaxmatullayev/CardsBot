@@ -622,12 +622,20 @@ def award_achievement(user_id, achievement_id):
 
 # --- ОБМЕН (TRADE) ---
 
-def create_trade_offer(from_user_id, to_user_id, offered_card_id, wanted_card_id=None):
-    """Создаёт предложение обмена. Возвращает (trade_id, error_message) — ровно
-    один из них не None. Ограничиваем число одновременных исходящих заявок
-    одного игрока: без этого спамом (в т.ч. автокликером) можно закинуть сотни
-    заявок на одну и ту же карту — см. фикс дублирования в _transfer_card."""
+def create_trade_offer(from_user_id, to_user_id, offered_card_id, wanted_card_id=None, quantity=1):
+    """Создаёт предложение обмена на quantity копий offered_card_id. Возвращает
+    (trade_id, error_message) — ровно один из них не None. Ограничиваем число
+    одновременных исходящих заявок одного игрока: без этого спамом (в т.ч.
+    автокликером) можно закинуть сотни заявок на одну и ту же карту — см.
+    фикс дублирования в _transfer_card."""
     from config import MAX_PENDING_TRADE_OFFERS
+
+    owned = supabase.table("user_cards").select("count").eq(
+        "user_id", from_user_id).eq("card_id", offered_card_id).execute()
+    have = owned.data[0]['count'] if owned.data else 0
+    if have < quantity:
+        return None, f"У вас только {have} копии этой карты"
+
     pending = supabase.table("trade_offers").select("id", count="exact").eq(
         "from_user_id", from_user_id).eq("status", "pending").execute()
     if (pending.count or 0) >= MAX_PENDING_TRADE_OFFERS:
@@ -637,6 +645,7 @@ def create_trade_offer(from_user_id, to_user_id, offered_card_id, wanted_card_id
         "from_user_id": from_user_id,
         "to_user_id": to_user_id,
         "offered_card_id": offered_card_id,
+        "offered_card_quantity": quantity,
         "wanted_card_id": wanted_card_id,
         "status": "pending"
     }
@@ -672,10 +681,11 @@ def accept_trade(trade_id, user_id):
     from_id = trade['from_user_id']
     to_id = trade['to_user_id']
     off_card = trade['offered_card_id']
+    off_qty = trade.get('offered_card_quantity') or 1
     want_card = trade.get('wanted_card_id')
 
-    # Перемещаем предложенную карту: from -> to
-    ok1 = _transfer_card(from_id, to_id, off_card)
+    # Перемещаем предложенную карту (off_qty копий): from -> to
+    ok1 = _transfer_card(from_id, to_id, off_card, off_qty)
     if not ok1:
         supabase.table("trade_offers").update({"status": "failed"}).eq("id", trade_id).execute()
         return False, "У отправителя больше нет этой карты — обмен невозможен"
@@ -685,7 +695,7 @@ def accept_trade(trade_id, user_id):
         ok2 = _transfer_card(to_id, from_id, want_card)
         if not ok2:
             # Откатываем уже переданную карту — обмен не должен завершиться наполовину
-            _transfer_card(to_id, from_id, off_card)
+            _transfer_card(to_id, from_id, off_card, off_qty)
             supabase.table("trade_offers").update({"status": "failed"}).eq("id", trade_id).execute()
             return False, "У вас больше нет запрошенной карты — обмен невозможен"
 
@@ -699,9 +709,10 @@ def decline_trade(trade_id, user_id):
         "id", trade_id).eq("to_user_id", user_id).eq("status", "pending").execute()
 
 
-def _transfer_card(from_user_id, to_user_id, card_id):
-    """Перемещает 1 карту между пользователями. Возвращает True, только если
-    карта реально была у отправителя и была атомарно списана.
+def _transfer_card(from_user_id, to_user_id, card_id, quantity=1):
+    """Перемещает quantity копий карты между пользователями. Возвращает True,
+    только если у отправителя реально было ≥quantity копий и они были
+    атомарно списаны.
 
     Раньше, если у отправителя карты уже не было (например, её забрала ранее
     принятая заявка), получатель всё равно получал карту — это позволяло
@@ -710,12 +721,12 @@ def _transfer_card(from_user_id, to_user_id, card_id):
     Условие в WHERE ниже — атомарный "клейм", защищающий от такого же дубля
     при параллельных/повторных запросах (двойной клик, автокликер)."""
     existing = supabase.table("user_cards").select("*").eq("user_id", from_user_id).eq("card_id", card_id).execute()
-    if not existing.data or existing.data[0]['count'] < 1:
+    if not existing.data or existing.data[0]['count'] < quantity:
         return False
     row = existing.data[0]
 
-    if row['count'] > 1:
-        claim = supabase.table("user_cards").update({"count": row['count'] - 1}).eq(
+    if row['count'] > quantity:
+        claim = supabase.table("user_cards").update({"count": row['count'] - quantity}).eq(
             "id", row['id']).eq("count", row['count']).execute()
     else:
         claim = supabase.table("user_cards").delete().eq("id", row['id']).execute()
@@ -723,12 +734,12 @@ def _transfer_card(from_user_id, to_user_id, card_id):
     if not claim.count:
         return False
 
-    if row['count'] <= 1:
+    if row['count'] <= quantity:
         # Отдали последнюю копию — освобождаем слот в отряде на арене, если она
         # там стояла. Иначе карты у игрока уже нет, а слот всё ещё "занят".
         _remove_from_squad(from_user_id, card_id)
 
-    add_card_to_user(to_user_id, card_id)
+    add_cards_to_user(to_user_id, card_id, quantity)
     return True
 
 

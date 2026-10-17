@@ -169,12 +169,74 @@ def market_sell_start(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_sell_card:"))
 def market_sell_card(call):
+    bot.answer_callback_query(call.id)
     card_id = int(call.data.split(":")[1])
     user_id = call.from_user.id
+
+    inv_res = get_user_inventory(user_id)
+    item = next((i for i in (inv_res.data or [])
+                if i.get('cards') and i['cards'].get('id') == card_id), None)
+    have = item['count'] if item else 0
+    if have < 1:
+        bot.answer_callback_query(call.id, "У вас больше нет этой карты", show_alert=True)
+        return
+
     _listing_state[user_id] = {'card_id': card_id}
 
+    if have == 1:
+        # Нечего выбирать — сразу продолжаем с 1 копией
+        _listing_state[user_id]['quantity'] = 1
+        msg = bot.send_message(call.message.chat.id,
+                               "💰 Введите цену продажи за штуку в монетах (целое число):\n\nОтмена — /cancel")
+        register_next_step_handler_for_user(bot, msg, user_id, _market_sell_set_price)
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("1 шт", callback_data=f"mkt_qty:{card_id}:1"),
+        types.InlineKeyboardButton(f"Все ({have})", callback_data=f"mkt_qty:{card_id}:{have}"),
+    )
+    markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="menu_market"))
     msg = bot.send_message(call.message.chat.id,
-                           "💰 Введите цену продажи в монетах (целое число):\n\nОтмена — /cancel")
+                           f"🔢 Сколько копий выставить на продажу? (у вас {have})\n"
+                           f"Каждая копия станет отдельным лотом по одной цене.\n"
+                           f"Выберите кнопкой или введите число:\n\nОтмена — /cancel",
+                           reply_markup=markup)
+    register_next_step_handler_for_user(bot, msg, user_id, _market_qty_text_step, card_id, have)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_qty:"))
+def market_qty_cb(call):
+    bot.answer_callback_query(call.id)
+    _, card_id, qty = call.data.split(":")
+    user_id = call.from_user.id
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+    _listing_state.setdefault(user_id, {})['quantity'] = int(qty)
+    msg = bot.send_message(call.message.chat.id,
+                           "💰 Введите цену продажи за штуку в монетах (целое число):\n\nОтмена — /cancel")
+    register_next_step_handler_for_user(bot, msg, user_id, _market_sell_set_price)
+
+
+def _market_qty_text_step(message, card_id, have):
+    user_id = message.from_user.id
+    if message.text == '/cancel':
+        _listing_state.pop(user_id, None)
+        bot.send_message(message.chat.id, "Отменено.")
+        return
+    try:
+        qty = int(message.text.strip())
+        if qty < 1 or qty > have:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, f"❌ Введите целое число от 1 до {have}:")
+        register_next_step_handler_for_user(bot, msg, user_id, _market_qty_text_step, card_id, have)
+        return
+    _listing_state.setdefault(user_id, {})['quantity'] = qty
+    msg = bot.send_message(message.chat.id,
+                           "💰 Введите цену продажи за штуку в монетах (целое число):\n\nОтмена — /cancel")
     register_next_step_handler_for_user(bot, msg, user_id, _market_sell_set_price)
 
 
@@ -196,14 +258,24 @@ def _market_sell_set_price(message):
 
     state = _listing_state.get(user_id, {})
     card_id = state.get('card_id')
+    quantity = state.get('quantity', 1)
     if not card_id:
         bot.send_message(message.chat.id, "Ошибка. Начните заново.")
         return
 
-    success, result = list_card_on_market(user_id, card_id, price)
-    if success:
-        bot.send_message(message.chat.id, f"✅ Карта выставлена на продажу за 💰 {price} монет!")
-    else:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {result}")
+    listed = 0
+    for _ in range(quantity):
+        success, result = list_card_on_market(user_id, card_id, price)
+        if success:
+            listed += 1
+        else:
+            break  # копии кончились (или гонка с другим действием) — не пытаемся дальше
+
+    if listed:
+        qty_txt = f" ({listed} шт)" if listed > 1 else ""
+        bot.send_message(message.chat.id, f"✅ Карта выставлена на продажу за 💰 {price} монет{qty_txt}!")
+    if listed < quantity:
+        bot.send_message(message.chat.id,
+                         f"⚠️ Выставлено только {listed} из {quantity} — остальных копий уже не было.")
 
     _listing_state.pop(user_id, None)

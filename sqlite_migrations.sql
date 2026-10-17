@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS trade_offers (
     from_user_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     to_user_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     offered_card_id INTEGER REFERENCES cards(id) ON DELETE SET NULL,
+    offered_card_quantity INTEGER DEFAULT 1,
     wanted_card_id INTEGER REFERENCES cards(id) ON DELETE SET NULL,
     status TEXT DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
