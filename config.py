@@ -98,28 +98,30 @@ PACK_CONFIG = {
 # "get_rare" встречается в обоих списках) — прогресс хранится по паре
 # (task_id, period), поэтому дневной и недельный счётчики не пересекаются
 
+# Награды удвоены по сравнению с исходными (явный запрос: "умножить на ту
+# сумму которая была" — если было 500, пусть будет 1000)
 DAILY_TASKS = [
-    {"id": "login",        "name": "🌟 Войти в игру",              "target": 1, "reward_coins": 30,  "reward_gems": 0},
-    {"id": "get_card",     "name": "🎴 Получить 5 карт",            "target": 5, "reward_coins": 60,  "reward_gems": 0},
-    {"id": "open_pack",    "name": "📦 Открыть 1 пак",              "target": 1, "reward_coins": 80,  "reward_gems": 0},
-    {"id": "open_packs_3", "name": "📦 Открыть 3 пака",             "target": 3, "reward_coins": 220, "reward_gems": 0},
-    {"id": "arena_battle", "name": "⚔️ Провести 1 бой",             "target": 1, "reward_coins": 70,  "reward_gems": 1},
-    {"id": "get_rare",     "name": "🔵 Получить 2 карты Rare",      "target": 2, "reward_coins": 90,  "reward_gems": 0},
-    {"id": "get_epic",     "name": "🟣 Получить 2 карты Epic",      "target": 2, "reward_coins": 180, "reward_gems": 1},
-    {"id": "get_legendary","name": "🟡 Получить 1 карту Legendary", "target": 1, "reward_coins": 350, "reward_gems": 3},
-    {"id": "fuse_card",    "name": "🔀 Улучшить 1 карту",           "target": 1, "reward_coins": 120, "reward_gems": 0},
-    {"id": "claim_bonus",  "name": "🎁 Забрать ежедневный бонус",   "target": 1, "reward_coins": 50,  "reward_gems": 0},
+    {"id": "login",        "name": "🌟 Войти в игру",              "target": 1, "reward_coins": 60,  "reward_gems": 0},
+    {"id": "get_card",     "name": "🎴 Получить 5 карт",            "target": 5, "reward_coins": 120, "reward_gems": 0},
+    {"id": "open_pack",    "name": "📦 Открыть 1 пак",              "target": 1, "reward_coins": 160, "reward_gems": 0},
+    {"id": "open_packs_3", "name": "📦 Открыть 3 пака",             "target": 3, "reward_coins": 440, "reward_gems": 0},
+    {"id": "arena_battle", "name": "⚔️ Провести 1 бой",             "target": 1, "reward_coins": 140, "reward_gems": 2},
+    {"id": "get_rare",     "name": "🔵 Получить 2 карты Rare",      "target": 2, "reward_coins": 180, "reward_gems": 0},
+    {"id": "get_epic",     "name": "🟣 Получить 2 карты Epic",      "target": 2, "reward_coins": 360, "reward_gems": 2},
+    {"id": "get_legendary","name": "🟡 Получить 1 карту Legendary", "target": 1, "reward_coins": 700, "reward_gems": 6},
+    {"id": "fuse_card",    "name": "🔀 Улучшить 1 карту",           "target": 1, "reward_coins": 240, "reward_gems": 0},
+    {"id": "claim_bonus",  "name": "🎁 Забрать ежедневный бонус",   "target": 1, "reward_coins": 100, "reward_gems": 0},
 ]
 
 WEEKLY_TASKS = [
-    {"id": "open_packs_10", "name": "📦 Открыть 10 паков",         "target": 10,   "reward_coins": 500,  "reward_gems": 5},
-    {"id": "battles_5",     "name": "⚔️ Выиграть 5 боёв",          "target": 5,    "reward_coins": 300,  "reward_gems": 3},
-    {"id": "get_rare",      "name": "🔵 Получить 10 карт Rare",     "target": 10,   "reward_coins": 400,  "reward_gems": 3},
-    {"id": "get_epic",      "name": "🟣 Получить 5 карт Epic",      "target": 5,    "reward_coins": 500,  "reward_gems": 5},
-    {"id": "get_mythic",    "name": "🔴 Получить 1 карту Mythic",   "target": 1,    "reward_coins": 900,  "reward_gems": 10},
-    {"id": "new_card",      "name": "🔥 Получить 15 новых карт",    "target": 15,   "reward_coins": 350,  "reward_gems": 0},
-    {"id": "spend_coins",   "name": "💰 Потратить 2000 монет",      "target": 2000, "reward_coins": 250,  "reward_gems": 2},
-    {"id": "trade_complete","name": "🔁 Совершить 2 обмена",        "target": 2,    "reward_coins": 200,  "reward_gems": 0},
+    {"id": "open_packs_10", "name": "📦 Открыть 10 паков",         "target": 10,   "reward_coins": 1000, "reward_gems": 10},
+    {"id": "battles_5",     "name": "⚔️ Выиграть 5 боёв",          "target": 5,    "reward_coins": 600,  "reward_gems": 6},
+    {"id": "get_rare",      "name": "🔵 Получить 10 карт Rare",     "target": 10,   "reward_coins": 800,  "reward_gems": 6},
+    {"id": "get_epic",      "name": "🟣 Получить 5 карт Epic",      "target": 5,    "reward_coins": 1000, "reward_gems": 10},
+    {"id": "get_mythic",    "name": "🔴 Получить 1 карту Mythic",   "target": 1,    "reward_coins": 1800, "reward_gems": 20},
+    {"id": "new_card",      "name": "🔥 Получить 15 новых карт",    "target": 15,   "reward_coins": 700,  "reward_gems": 0},
+    {"id": "spend_coins",   "name": "💰 Потратить 2000 монет",      "target": 2000, "reward_coins": 500,  "reward_gems": 4},
+    {"id": "trade_complete","name": "🔁 Совершить 2 обмена",        "target": 2,    "reward_coins": 400,  "reward_gems": 0},
 ]
 
 # --- ДОСТИЖЕНИЯ ---

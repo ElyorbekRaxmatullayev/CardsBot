@@ -2,7 +2,7 @@ from telebot import types
 
 from config import RARITY_CONFIG, RARITY_ORDER
 from database import (get_market_listings, list_card_on_market,
-                      buy_from_market, cancel_market_listing,
+                      buy_from_market, cancel_market_listing, count_active_market_listings,
                       get_my_market_listings, get_user_inventory, get_user_data)
 from loader import bot
 from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user
@@ -16,14 +16,14 @@ _listing_state = {}  # user_id -> {'card_id': ...}
 def get_market_menu_markup():
     markup = types.InlineKeyboardMarkup()
     markup.row(
-        types.InlineKeyboardButton("🔍 Все карты", callback_data="mkt_browse:all"),
+        types.InlineKeyboardButton("🔍 Все карты", callback_data="mkt_browse:all:0"),
         types.InlineKeyboardButton("🎴 Мои листинги", callback_data="mkt_my")
     )
     markup.add(types.InlineKeyboardButton("➕ Выставить карту", callback_data="mkt_sell_start"))
     # Фильтры по редкости
-    row1 = [types.InlineKeyboardButton(RARITY_CONFIG[r]['emoji'], callback_data=f"mkt_browse:{r}")
+    row1 = [types.InlineKeyboardButton(RARITY_CONFIG[r]['emoji'], callback_data=f"mkt_browse:{r}:0")
             for r in ["Rare", "Epic", "Legendary"]]
-    row2 = [types.InlineKeyboardButton(RARITY_CONFIG[r]['emoji'], callback_data=f"mkt_browse:{r}")
+    row2 = [types.InlineKeyboardButton(RARITY_CONFIG[r]['emoji'], callback_data=f"mkt_browse:{r}:0")
             for r in ["Mythic", "Divine", "Secret"]]
     markup.row(*row1)
     markup.row(*row2)
@@ -34,10 +34,10 @@ def get_market_menu_markup():
 @bot.callback_query_handler(func=lambda call: call.data == "menu_market")
 def market_menu(call):
     bot.answer_callback_query(call.id)
-    listings = get_market_listings(limit=5)
+    total = count_active_market_listings()
     txt = (f"🏪 <b>Торговая площадка</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
-           f"Активных предложений: <b>{len(listings)}</b>\n\n"
+           f"Активных предложений: <b>{total}</b>\n\n"
            f"Фильтруй по редкости или смотри все:")
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       txt, reply_markup=get_market_menu_markup(), parse_mode="HTML")
@@ -48,19 +48,20 @@ def market_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_browse:"))
 def market_browse(call):
     bot.answer_callback_query(call.id)
-    rarity_filter = call.data.split(":")[1]
-    rarity_filter = None if rarity_filter == "all" else rarity_filter
+    parts = call.data.split(":")
+    rarity_key = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
+    rarity_filter = None if rarity_key == "all" else rarity_key
 
-    listings = get_market_listings(rarity_filter=rarity_filter, limit=20)
+    page_items, total, page, max_page = get_market_listings(rarity_filter=rarity_filter, page=page)
+    filter_name = RARITY_CONFIG.get(rarity_filter, {}).get('ru', 'все') if rarity_filter else "все"
 
-    if not listings:
-        filter_name = RARITY_CONFIG.get(rarity_filter, {}).get('ru', 'все') if rarity_filter else "все"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    if not page_items:
         txt = f"🏪 <b>Торговая площадка</b>\n\nНет предложений ({filter_name})."
     else:
-        filter_name = RARITY_CONFIG.get(rarity_filter, {}).get('ru', 'все') if rarity_filter else "все"
-        txt = f"🏪 <b>Торговая площадка</b> [{filter_name}]\n➖➖➖➖➖➖➖➖\n\n"
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for listing in listings:
+        txt = f"🏪 <b>Торговая площадка</b> [{filter_name}] (всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
+        for listing in page_items:
             card = listing.get('cards') or {}
             seller_name = (listing.get('users') or {}).get('first_name', '?')
             emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
@@ -69,14 +70,18 @@ def market_browse(call):
                     f"   💰 {listing['price']} монет | Продавец: {seller_name}\n\n")
             markup.add(types.InlineKeyboardButton(
                 f"💰 Купить «{card.get('name', '?')}» за {listing['price']}",
-                callback_data=f"mkt_buy:{listing['id']}"
+                callback_data=f"mkt_buy:{listing['id']}:{rarity_key}:{page}"
             ))
-        markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_market"))
-        safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                          txt, reply_markup=markup, parse_mode="HTML")
-        return
 
-    markup = types.InlineKeyboardMarkup()
+        nav = []
+        if page > 0:
+            nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"mkt_browse:{rarity_key}:{page - 1}"))
+        nav.append(types.InlineKeyboardButton(f"{page + 1}/{max_page + 1}", callback_data="ignore"))
+        if page < max_page:
+            nav.append(types.InlineKeyboardButton("➡️", callback_data=f"mkt_browse:{rarity_key}:{page + 1}"))
+        if len(nav) > 1:
+            markup.row(*nav)
+
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_market"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       txt, reply_markup=markup, parse_mode="HTML")
@@ -86,12 +91,16 @@ def market_browse(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_buy:"))
 def market_buy(call):
-    listing_id = int(call.data.split(":")[1])
+    parts = call.data.split(":")
+    listing_id = int(parts[1])
+    rarity_key = parts[2] if len(parts) > 2 else "all"
+    page = parts[3] if len(parts) > 3 else "0"
     user_id = call.from_user.id
     success, msg = buy_from_market(user_id, listing_id)
     bot.answer_callback_query(call.id, msg, show_alert=True)
     if success:
-        call.data = "mkt_browse:all"
+        # Возвращаемся на ту же страницу/фильтр, откуда покупали, а не всегда в начало
+        call.data = f"mkt_browse:{rarity_key}:{page}"
         market_browse(call)
 
 

@@ -784,16 +784,30 @@ def list_card_on_market(user_id, card_id, price):
     return False, "Ошибка создания листинга"
 
 
-def get_market_listings(rarity_filter=None, sort_by="price", limit=20):
-    """Получает активные листинги"""
+def get_market_listings(rarity_filter=None, sort_by="price", page=0, page_size=10):
+    """Активные листинги с пагинацией. Раньше фильтр по редкости применялся
+    ПОСЛЕ limit(20) — если 20 самых дешёвых листингов не содержали нужную
+    редкость, страница показывала пусто, даже если подходящих было полно.
+    Теперь фильтруем ДО пагинации. Возвращает (page_items, total, page, max_page)."""
     query = supabase.table("market_listings").select("*, cards(*), users!seller_id(first_name)").eq("status", "active")
     if sort_by == "price":
         query = query.order("price")
-    res = query.limit(limit).execute()
+    res = query.execute()
     listings = res.data or []
     if rarity_filter:
         listings = [l for l in listings if l.get('cards', {}).get('rarity') == rarity_filter]
-    return listings
+
+    total = len(listings)
+    max_page = max(0, (total - 1) // page_size)
+    page = max(0, min(page, max_page))
+    start = page * page_size
+    return listings[start:start + page_size], total, page, max_page
+
+
+def count_active_market_listings():
+    """Общее число активных листингов (для шапки главного меню площадки)"""
+    res = supabase.table("market_listings").select("id", count="exact").eq("status", "active").execute()
+    return res.count or 0
 
 
 def buy_from_market(buyer_id, listing_id):
