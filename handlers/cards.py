@@ -66,8 +66,10 @@ def handler_get_card(message):
     # Формируем упоминание игрока
     user_mention = f"@{message.from_user.username}" if message.from_user.username else f"<b>{message.from_user.first_name}</b>"
     caption = (f"👤 {user_mention} получил карту:\n"
-               f"{emoji} <b>{card['name']}</b>\n"
-               f"⭐️ {card['rarity']}\n"
+               f"{emoji} <b>{card['name']}</b>\n")
+    if card.get('dunhua'):
+        caption += f"Мир: {card['dunhua']}\n"
+    caption += (f"⭐️ {card['rarity']}\n"
                f"⚔️ {card['attack']} | ❤️ {card['hp']}")
     if is_dup: caption += f"\n♻️ Дубликат (x{count})"
     if used_free_draw:
@@ -173,7 +175,9 @@ def inventory_nav(call):
     level = item.get('card_level', 1) or 1
     eff_attack, eff_hp = get_effective_stats(card['attack'], card['hp'], level)
 
-    caption = (f"{RARITY_CONFIG[rarity]['emoji']} <b>{card['name']}</b>\n"
+    universe_line = f"\n\nМир: {card['dunhua']}\n" if card.get('dunhua') else "\n"
+    caption = (f"{RARITY_CONFIG[rarity]['emoji']} <b>{card['name']}</b>"
+               f"{universe_line}\n"
                f"⚔️ {eff_attack} | ❤️ {eff_hp}\n"
                f"🔺 Уровень: {level}\n"
                f"📦 В наличии: {item['count']}\n"
