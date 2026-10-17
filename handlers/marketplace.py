@@ -136,146 +136,212 @@ def market_cancel(call):
     market_my(call)
 
 
-# --- ВЫСТАВИТЬ КАРТУ НА ПРОДАЖУ ---
+# --- ВЫСТАВИТЬ КАРТЫ НА ПРОДАЖУ (мультивыбор) ---
+# Можно отметить сразу несколько РАЗНЫХ карт (любых редкостей) галочками,
+# затем бот по очереди спрашивает количество и цену для каждой отмеченной —
+# не нужно каждый раз заново заходить в раздел продажи.
+
+MKT_SELECT_PAGE_SIZE = 10
+
+
+def _get_sellable_inventory(user_id):
+    inv_res = get_user_inventory(user_id)
+    return [i for i in (inv_res.data or []) if i.get('cards') and i.get('count', 0) > 0]
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "mkt_sell_start")
 def market_sell_start(call):
     bot.answer_callback_query(call.id)
     user_id = call.from_user.id
-    inv_res = get_user_inventory(user_id)
-    inv_data = inv_res.data if inv_res.data else []
+    _listing_state[user_id] = {'selected': set()}
+    _render_sell_select(call.message.chat.id, call.message.message_id, user_id, page=0)
 
+
+def _render_sell_select(chat_id, message_id, user_id, page=0):
+    inv_data = _get_sellable_inventory(user_id)
     if not inv_data:
-        bot.answer_callback_query(call.id, "У вас нет карт для продажи.", show_alert=True)
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_market"))
+        safe_edit_message(bot, chat_id, message_id, "У вас нет карт для продажи.",
+                          reply_markup=markup, parse_mode="HTML")
         return
+
+    selected = _listing_state.get(user_id, {}).get('selected', set())
+    total = len(inv_data)
+    max_page = max(0, (total - 1) // MKT_SELECT_PAGE_SIZE)
+    page = max(0, min(page, max_page))
+    start = page * MKT_SELECT_PAGE_SIZE
+    page_items = inv_data[start:start + MKT_SELECT_PAGE_SIZE]
 
     markup = types.InlineKeyboardMarkup(row_width=1)
-    for item in inv_data[:15]:
-        card = item.get('cards', {})
-        if not card:
-            continue
+    for item in page_items:
+        card = item['cards']
         emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
-        value = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('value', 0)
+        mark = "✅ " if card['id'] in selected else ""
         markup.add(types.InlineKeyboardButton(
-            f"{emoji} {card['name']} (x{item['count']}) | базовая цена {value}",
-            callback_data=f"mkt_sell_card:{card['id']}"
+            f"{mark}{emoji} {card['name']} (x{item['count']})",
+            callback_data=f"mkt_toggle:{card['id']}:{page}"
         ))
 
+    nav = []
+    if page > 0:
+        nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"mkt_sellpage:{page - 1}"))
+    nav.append(types.InlineKeyboardButton(f"{page + 1}/{max_page + 1}", callback_data="ignore"))
+    if page < max_page:
+        nav.append(types.InlineKeyboardButton("➡️", callback_data=f"mkt_sellpage:{page + 1}"))
+    if len(nav) > 1:
+        markup.row(*nav)
+
+    if selected:
+        markup.add(types.InlineKeyboardButton(f"✅ Готово ({len(selected)} выбрано)", callback_data="mkt_sell_confirm"))
     markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="menu_market"))
-    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                      "🏷 <b>Выберите карту для продажи:</b>",
-                      reply_markup=markup, parse_mode="HTML")
+
+    txt = (f"🏷 <b>Выберите карты для продажи</b> (всего карт: {total})\n"
+           f"Нажимайте на карты, чтобы отметить ✅ — можно выбрать сразу несколько разных карт.")
+    safe_edit_message(bot, chat_id, message_id, txt, reply_markup=markup, parse_mode="HTML")
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_sell_card:"))
-def market_sell_card(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_toggle:"))
+def market_toggle_cb(call):
     bot.answer_callback_query(call.id)
-    card_id = int(call.data.split(":")[1])
+    _, card_id, page = call.data.split(":")
+    card_id = int(card_id)
     user_id = call.from_user.id
+    state = _listing_state.setdefault(user_id, {'selected': set()})
+    selected = state.setdefault('selected', set())
+    if card_id in selected:
+        selected.discard(card_id)
+    else:
+        selected.add(card_id)
+    _render_sell_select(call.message.chat.id, call.message.message_id, user_id, page=int(page))
 
-    inv_res = get_user_inventory(user_id)
-    item = next((i for i in (inv_res.data or [])
-                if i.get('cards') and i['cards'].get('id') == card_id), None)
-    have = item['count'] if item else 0
-    if have < 1:
-        bot.answer_callback_query(call.id, "У вас больше нет этой карты", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_sellpage:"))
+def market_sellpage_cb(call):
+    bot.answer_callback_query(call.id)
+    page = int(call.data.split(":")[1])
+    _render_sell_select(call.message.chat.id, call.message.message_id, call.from_user.id, page=page)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "mkt_sell_confirm")
+def market_sell_confirm(call):
+    bot.answer_callback_query(call.id)
+    user_id = call.from_user.id
+    state = _listing_state.get(user_id, {})
+    selected = list(state.get('selected', set()))
+    if not selected:
+        bot.answer_callback_query(call.id, "Ничего не выбрано", show_alert=True)
         return
 
-    _listing_state[user_id] = {'card_id': card_id}
-
-    if have == 1:
-        # Нечего выбирать — сразу продолжаем с 1 копией
-        _listing_state[user_id]['quantity'] = 1
-        msg = bot.send_message(call.message.chat.id,
-                               "💰 Введите цену продажи за штуку в монетах (целое число):\n\nОтмена — /cancel")
-        register_next_step_handler_for_user(bot, msg, user_id, _market_sell_set_price)
-        return
-
-    markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("1 шт", callback_data=f"mkt_qty:{card_id}:1"),
-        types.InlineKeyboardButton(f"Все ({have})", callback_data=f"mkt_qty:{card_id}:{have}"),
-    )
-    markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="menu_market"))
-    msg = bot.send_message(call.message.chat.id,
-                           f"🔢 Сколько копий выставить на продажу? (у вас {have})\n"
-                           f"Каждая копия станет отдельным лотом по одной цене.\n"
-                           f"Выберите кнопкой или введите число:\n\nОтмена — /cancel",
-                           reply_markup=markup)
-    register_next_step_handler_for_user(bot, msg, user_id, _market_qty_text_step, card_id, have)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("mkt_qty:"))
-def market_qty_cb(call):
-    bot.answer_callback_query(call.id)
-    _, card_id, qty = call.data.split(":")
-    user_id = call.from_user.id
+    _listing_state[user_id] = {'queue': selected, 'results': []}
     try:
         bot.delete_message(call.message.chat.id, call.message.message_id)
     except Exception:
         pass
-    _listing_state.setdefault(user_id, {})['quantity'] = int(qty)
-    msg = bot.send_message(call.message.chat.id,
-                           "💰 Введите цену продажи за штуку в монетах (целое число):\n\nОтмена — /cancel")
-    register_next_step_handler_for_user(bot, msg, user_id, _market_sell_set_price)
+    _start_next_sell_item(call.message.chat.id, user_id)
 
 
-def _market_qty_text_step(message, card_id, have):
+def _start_next_sell_item(chat_id, user_id):
+    state = _listing_state.get(user_id)
+    if not state:
+        return
+    queue = state.get('queue', [])
+    if not queue:
+        _finish_sell_queue(chat_id, user_id)
+        return
+
+    card_id = queue[0]
+    inv_res = get_user_inventory(user_id)
+    item = next((i for i in (inv_res.data or [])
+                if i.get('cards') and i['cards'].get('id') == card_id), None)
+    have = item['count'] if item else 0
+    card_name = item['cards']['name'] if item else f"#{card_id}"
+
+    if have < 1:
+        # Копии этой карты уже нет (отдали/продали в другом месте, пока шёл выбор)
+        state['results'].append((card_name, 0))
+        state['queue'] = queue[1:]
+        _start_next_sell_item(chat_id, user_id)
+        return
+
+    state['current_card_id'] = card_id
+    state['current_card_name'] = card_name
+    state['current_have'] = have
+
+    msg = bot.send_message(chat_id,
+                           f"🔢 «{card_name}» (у вас {have} шт) — сколько копий выставить на продажу?\n"
+                           f"Введите число от 1 до {have}.\n\nПропустить эту карту — /skip")
+    register_next_step_handler_for_user(bot, msg, user_id, _queue_qty_step)
+
+
+def _queue_qty_step(message):
     user_id = message.from_user.id
-    if message.text == '/cancel':
-        _listing_state.pop(user_id, None)
-        bot.send_message(message.chat.id, "Отменено.")
+    state = _listing_state.get(user_id)
+    if not state:
+        return
+    if message.text and message.text.strip() == '/skip':
+        state['results'].append((state.get('current_card_name', '?'), 0))
+        state['queue'] = state['queue'][1:]
+        _start_next_sell_item(message.chat.id, user_id)
         return
     try:
         qty = int(message.text.strip())
+        have = state.get('current_have', 1)
         if qty < 1 or qty > have:
             raise ValueError
-    except ValueError:
-        msg = bot.send_message(message.chat.id, f"❌ Введите целое число от 1 до {have}:")
-        register_next_step_handler_for_user(bot, msg, user_id, _market_qty_text_step, card_id, have)
+    except (ValueError, AttributeError):
+        msg = bot.send_message(message.chat.id, f"❌ Введите число от 1 до {state.get('current_have', 1)}, либо /skip:")
+        register_next_step_handler_for_user(bot, msg, user_id, _queue_qty_step)
         return
-    _listing_state.setdefault(user_id, {})['quantity'] = qty
-    msg = bot.send_message(message.chat.id,
-                           "💰 Введите цену продажи за штуку в монетах (целое число):\n\nОтмена — /cancel")
-    register_next_step_handler_for_user(bot, msg, user_id, _market_sell_set_price)
+
+    state['current_qty'] = qty
+    msg = bot.send_message(message.chat.id, "💰 Цена за штуку в монетах (целое число), либо /skip:")
+    register_next_step_handler_for_user(bot, msg, user_id, _queue_price_step)
 
 
-def _market_sell_set_price(message):
+def _queue_price_step(message):
     user_id = message.from_user.id
-    if message.text == '/cancel':
-        _listing_state.pop(user_id, None)
-        bot.send_message(message.chat.id, "Отменено.")
+    state = _listing_state.get(user_id)
+    if not state:
         return
-
+    if message.text and message.text.strip() == '/skip':
+        state['results'].append((state.get('current_card_name', '?'), 0))
+        state['queue'] = state['queue'][1:]
+        _start_next_sell_item(message.chat.id, user_id)
+        return
     try:
         price = int(message.text.strip())
         if price < 1:
             raise ValueError
-    except:
-        msg = bot.send_message(message.chat.id, "❌ Введите корректную цену (число > 0):")
-        register_next_step_handler_for_user(bot, msg, user_id, _market_sell_set_price)
+    except (ValueError, AttributeError):
+        msg = bot.send_message(message.chat.id, "❌ Введите корректную цену (> 0), либо /skip:")
+        register_next_step_handler_for_user(bot, msg, user_id, _queue_price_step)
         return
 
-    state = _listing_state.get(user_id, {})
-    card_id = state.get('card_id')
-    quantity = state.get('quantity', 1)
-    if not card_id:
-        bot.send_message(message.chat.id, "Ошибка. Начните заново.")
-        return
-
+    card_id = state['current_card_id']
+    qty = state.get('current_qty', 1)
     listed = 0
-    for _ in range(quantity):
-        success, result = list_card_on_market(user_id, card_id, price)
+    for _ in range(qty):
+        success, _result = list_card_on_market(user_id, card_id, price)
         if success:
             listed += 1
         else:
             break  # копии кончились (или гонка с другим действием) — не пытаемся дальше
 
-    if listed:
-        qty_txt = f" ({listed} шт)" if listed > 1 else ""
-        bot.send_message(message.chat.id, f"✅ Карта выставлена на продажу за 💰 {price} монет{qty_txt}!")
-    if listed < quantity:
-        bot.send_message(message.chat.id,
-                         f"⚠️ Выставлено только {listed} из {quantity} — остальных копий уже не было.")
+    state['results'].append((state.get('current_card_name', '?'), listed))
+    state['queue'] = state['queue'][1:]
+    _start_next_sell_item(message.chat.id, user_id)
 
-    _listing_state.pop(user_id, None)
+
+def _finish_sell_queue(chat_id, user_id):
+    state = _listing_state.pop(user_id, {})
+    results = state.get('results', [])
+    listed_lines = [f"• {name}: {cnt} шт" for name, cnt in results if cnt]
+    skipped_names = [name for name, cnt in results if not cnt]
+
+    txt = "✅ <b>Выставление на продажу завершено!</b>\n\n"
+    txt += ("\n".join(listed_lines) if listed_lines else "Ничего не выставлено.")
+    if skipped_names:
+        txt += f"\n\n⏭ Пропущено: {', '.join(skipped_names)}"
+
+    bot.send_message(chat_id, txt, parse_mode="HTML")

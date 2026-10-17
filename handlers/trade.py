@@ -227,134 +227,204 @@ def _trade_step_get_target(message):
     _send_trade_card_picker(message.chat.id, user_id, target['telegram_id'], target['first_name'], page=0)
 
 
-def _send_trade_card_picker(chat_id, user_id, target_id, target_name, page=0):
-    # Показываем карты пользователя для выбора (только реально имеющиеся —
-    # count=0 остаётся в user_cards как "прокачанная в 0 копий" запись-призрак
-    # или просто отданная/проданная карта, но её саму передать нельзя)
-    inv_res = get_user_inventory(user_id)
-    inv_data = [item for item in (inv_res.data or []) if item.get('count', 0) > 0 and item.get('cards')]
+# --- ВЫБОР КАРТ (мультивыбор) ---
+# Можно отметить сразу несколько РАЗНЫХ карт (любых редкостей) галочками,
+# затем бот по очереди спрашивает количество для каждой отмеченной и
+# отправляет отдельное предложение обмена тому же игроку.
 
+def _render_trade_picker(user_id, target_name, page=0):
+    """Строит (txt, markup, page) для экрана выбора карт — используется и
+    для первой отправки, и для последующего редактирования при toggle/
+    листании. Возвращает (None, None, 0), если отдавать нечего."""
+    inv_data = [item for item in (get_user_inventory(user_id).data or [])
+               if item.get('count', 0) > 0 and item.get('cards')]
     if not inv_data:
-        bot.send_message(chat_id, "У вас нет карт для обмена.")
-        _trade_state.pop(user_id, None)
-        return
+        return None, None, 0
 
+    selected = _trade_state.get(user_id, {}).get('selected', set())
     page_items, page, max_page, total = _paginate(inv_data, page)
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     for item in page_items:
         card = item['cards']
         emoji = RARITY_CONFIG.get(card.get('rarity', ''), {}).get('emoji', '🃏')
+        mark = "✅ " if card['id'] in selected else ""
         markup.add(types.InlineKeyboardButton(
-            f"{emoji} {card['name']} (x{item['count']})",
-            callback_data=f"trade_select_card:{card['id']}:{target_id}"
+            f"{mark}{emoji} {card['name']} (x{item['count']})",
+            callback_data=f"trade_toggle:{card['id']}:{page}"
         ))
 
     if max_page > 0:
-        markup.row(*_page_nav_row(f"trade_pick_page:{target_id}", page, max_page))
+        markup.row(*_page_nav_row("trade_pick_page", page, max_page))
+
+    if selected:
+        markup.add(types.InlineKeyboardButton(f"✅ Готово ({len(selected)} выбрано)", callback_data="trade_select_confirm"))
     markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="menu_trade"))
-    bot.send_message(chat_id,
-                     f"Выберите карту для предложения игроку <b>{target_name}</b> "
-                     f"(стр. {page + 1}/{max_page + 1}, всего карт: {total}):",
-                     reply_markup=markup, parse_mode="HTML")
+
+    txt = (f"Выберите карты для предложения игроку <b>{target_name}</b> "
+           f"(всего карт: {total}) — отмечайте ✅, можно сразу несколько:")
+    return txt, markup, page
+
+
+def _send_trade_card_picker(chat_id, user_id, target_id, target_name, page=0):
+    _trade_state[user_id] = {'target_id': target_id, 'target_name': target_name, 'selected': set()}
+    txt, markup, page = _render_trade_picker(user_id, target_name, page)
+    if txt is None:
+        bot.send_message(chat_id, "У вас нет карт для обмена.")
+        _trade_state.pop(user_id, None)
+        return
+    bot.send_message(chat_id, txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("trade_toggle:"))
+def trade_toggle_cb(call):
+    bot.answer_callback_query(call.id)
+    _, card_id, page = call.data.split(":")
+    card_id = int(card_id)
+    user_id = call.from_user.id
+    state = _trade_state.setdefault(user_id, {})
+    selected = state.setdefault('selected', set())
+    if card_id in selected:
+        selected.discard(card_id)
+    else:
+        selected.add(card_id)
+    txt, markup, _ = _render_trade_picker(user_id, state.get('target_name', '?'), page=int(page))
+    if txt:
+        safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt, reply_markup=markup, parse_mode="HTML")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trade_pick_page:"))
 def trade_pick_page_cb(call):
     bot.answer_callback_query(call.id)
-    _, target_id, page = call.data.split(":")
+    page = int(call.data.split(":")[1])
     user_id = call.from_user.id
     state = _trade_state.get(user_id) or {}
+    txt, markup, _ = _render_trade_picker(user_id, state.get('target_name', '?'), page=page)
+    if txt:
+        safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "trade_select_confirm")
+def trade_select_confirm(call):
+    bot.answer_callback_query(call.id)
+    user_id = call.from_user.id
+    state = _trade_state.get(user_id, {})
+    selected = list(state.get('selected', set()))
+    target_id = state.get('target_id')
     target_name = state.get('target_name', '?')
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    _send_trade_card_picker(call.message.chat.id, user_id, int(target_id), target_name, page=int(page))
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("trade_select_card:"))
-def trade_select_card(call):
-    bot.answer_callback_query(call.id)
-    parts = call.data.split(":")
-    card_id = int(parts[1])
-    target_id = int(parts[2])
-    user_id = call.from_user.id
-
-    inv_res = get_user_inventory(user_id)
-    item = next((i for i in (inv_res.data or [])
-                if i.get('cards') and i['cards'].get('id') == card_id), None)
-    have = item['count'] if item else 0
-    if have < 1:
-        bot.answer_callback_query(call.id, "У вас больше нет этой карты", show_alert=True)
+    if not selected or not target_id:
+        bot.answer_callback_query(call.id, "Ничего не выбрано", show_alert=True)
         return
 
-    state = _trade_state.setdefault(user_id, {})
-    state['card_id'] = card_id
-    state['target_id'] = target_id
-
-    if have == 1:
-        # Нечего выбирать — сразу предлагаем единственную копию
-        _finalize_trade_offer(call.message.chat.id, user_id, target_id, card_id, 1)
-        return
-
-    markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("1 шт", callback_data=f"trade_qty:{card_id}:{target_id}:1"),
-        types.InlineKeyboardButton(f"Все ({have})", callback_data=f"trade_qty:{card_id}:{target_id}:{have}"),
-    )
-    markup.add(types.InlineKeyboardButton("❌ Отмена", callback_data="menu_trade"))
-    msg = bot.send_message(call.message.chat.id,
-                           f"🔢 Сколько копий этой карты отдать? (у вас {have})\n"
-                           f"Выберите кнопкой или введите число:\n\nОтмена — /cancel",
-                           reply_markup=markup)
-    register_next_step_handler_for_user(bot, msg, user_id, _trade_qty_text_step, card_id, target_id, have)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("trade_qty:"))
-def trade_qty_cb(call):
-    bot.answer_callback_query(call.id)
-    _, card_id, target_id, qty = call.data.split(":")
-    user_id = call.from_user.id
+    _trade_state[user_id] = {'target_id': target_id, 'target_name': target_name,
+                             'queue': selected, 'results': []}
     try:
         bot.delete_message(call.message.chat.id, call.message.message_id)
     except Exception:
         pass
-    _finalize_trade_offer(call.message.chat.id, user_id, int(target_id), int(card_id), int(qty))
+    _start_next_trade_item(call.message.chat.id, user_id)
 
 
-def _trade_qty_text_step(message, card_id, target_id, have):
+# --- ОЧЕРЕДЬ: КОЛИЧЕСТВО ПО КАЖДОЙ ВЫБРАННОЙ КАРТЕ ---
+
+def _start_next_trade_item(chat_id, user_id):
+    state = _trade_state.get(user_id)
+    if not state:
+        return
+    queue = state.get('queue', [])
+    if not queue:
+        _finish_trade_queue(chat_id, user_id)
+        return
+
+    card_id = queue[0]
+    inv_res = get_user_inventory(user_id)
+    item = next((i for i in (inv_res.data or [])
+                if i.get('cards') and i['cards'].get('id') == card_id), None)
+    have = item['count'] if item else 0
+    card_name = item['cards']['name'] if item else f"#{card_id}"
+
+    if have < 1:
+        # Копии этой карты уже нет (отдали/продали в другом месте, пока шёл выбор)
+        state['results'].append((card_name, 0))
+        state['queue'] = queue[1:]
+        _start_next_trade_item(chat_id, user_id)
+        return
+
+    state['current_card_id'] = card_id
+    state['current_card_name'] = card_name
+    state['current_have'] = have
+
+    if have == 1:
+        # Нечего выбирать — сразу отдаём единственную копию
+        _create_trade_for_queue_item(chat_id, user_id, 1)
+        return
+
+    msg = bot.send_message(chat_id,
+                           f"🔢 «{card_name}» (у вас {have} шт) — сколько копий отдать?\n"
+                           f"Введите число от 1 до {have}.\n\nПропустить эту карту — /skip")
+    register_next_step_handler_for_user(bot, msg, user_id, _trade_queue_qty_step)
+
+
+def _trade_queue_qty_step(message):
     user_id = message.from_user.id
-    if message.text == '/cancel':
-        _trade_state.pop(user_id, None)
-        bot.send_message(message.chat.id, "Отменено.")
+    state = _trade_state.get(user_id)
+    if not state:
+        return
+    if message.text and message.text.strip() == '/skip':
+        state['results'].append((state.get('current_card_name', '?'), 0))
+        state['queue'] = state['queue'][1:]
+        _start_next_trade_item(message.chat.id, user_id)
         return
     try:
         qty = int(message.text.strip())
+        have = state.get('current_have', 1)
         if qty < 1 or qty > have:
             raise ValueError
-    except ValueError:
-        msg = bot.send_message(message.chat.id, f"❌ Введите целое число от 1 до {have}:")
-        register_next_step_handler_for_user(bot, msg, user_id, _trade_qty_text_step, card_id, target_id, have)
+    except (ValueError, AttributeError):
+        msg = bot.send_message(message.chat.id, f"❌ Введите число от 1 до {state.get('current_have', 1)}, либо /skip:")
+        register_next_step_handler_for_user(bot, msg, user_id, _trade_queue_qty_step)
         return
-    _finalize_trade_offer(message.chat.id, user_id, target_id, card_id, qty)
+    _create_trade_for_queue_item(message.chat.id, user_id, qty)
 
 
-def _finalize_trade_offer(chat_id, user_id, target_id, card_id, quantity):
+def _create_trade_for_queue_item(chat_id, user_id, quantity):
+    state = _trade_state.get(user_id)
+    if not state:
+        return
+    card_id = state['current_card_id']
+    card_name = state.get('current_card_name', '?')
+    target_id = state.get('target_id')
+
     trade_id, err = create_trade_offer(user_id, target_id, card_id, quantity=quantity)
     if trade_id:
-        qty_txt = f" (x{quantity})" if quantity > 1 else ""
-        bot.send_message(chat_id, f"✅ Предложение отправлено{qty_txt}!")
-        # Уведомляем получателя
+        state['results'].append((card_name, quantity))
+    else:
+        state['results'].append((f"{card_name} ({err})", 0))
+
+    state['queue'] = state['queue'][1:]
+    _start_next_trade_item(chat_id, user_id)
+
+
+def _finish_trade_queue(chat_id, user_id):
+    state = _trade_state.pop(user_id, {})
+    results = state.get('results', [])
+    target_id = state.get('target_id')
+
+    ok_lines = [f"• {name} x{qty}" for name, qty in results if qty]
+    failed_names = [name for name, qty in results if not qty]
+
+    txt = ("✅ <b>Предложения отправлены!</b>\n\n" if ok_lines else "Ничего не отправлено.\n\n")
+    txt += "\n".join(ok_lines)
+    if failed_names:
+        txt += f"\n\n⏭ Не отправлено: {', '.join(failed_names)}"
+    bot.send_message(chat_id, txt, parse_mode="HTML")
+
+    if ok_lines and target_id:
         try:
             bot.send_message(target_id,
-                             f"🤝 <b>Новое предложение обмена!</b>\n\n"
-                             f"Игрок предлагает вам обмен картой.\n"
+                             f"🤝 <b>Новые предложения обмена!</b>\n\n"
+                             f"Игрок предложил вам {len(ok_lines)} карт(ы).\n"
                              f"Откройте раздел 🤝 Обмен → Входящие предложения.",
                              parse_mode="HTML")
         except Exception:
             pass
-    else:
-        bot.send_message(chat_id, f"❌ Ошибка: {err or 'не удалось создать обмен'}")
-
-    _trade_state.pop(user_id, None)
