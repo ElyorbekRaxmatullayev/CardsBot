@@ -925,17 +925,14 @@ def get_user_rank(user_id):
 
 # --- УЛУЧШЕНИЕ КАРТ (FUSION) ---
 
-def get_fuse_requirements(rarity, current_level):
-    """Сколько копий и монет нужно для слияния с current_level на +1.
-    Требование копий растёт геометрически с уровнем (FUSE_COPIES_GROWTH) и
-    домножается на коэффициент редкости — прокачивать топовые карты
-    значительно труднее и дороже, чем Common."""
-    from config import (FUSE_BASE_COPIES, FUSE_COPIES_GROWTH, FUSE_BASE_COST_COINS,
-                        FUSE_COST_GROWTH, FUSE_RARITY_MULTIPLIER)
-    mult = FUSE_RARITY_MULTIPLIER.get(rarity, 1)
-    copies = max(2, round(FUSE_BASE_COPIES * (FUSE_COPIES_GROWTH ** (current_level - 1)) * mult))
-    cost = round(FUSE_BASE_COST_COINS * (FUSE_COST_GROWTH ** (current_level - 1)) * mult)
-    return copies, cost
+def get_fuse_requirements(current_level):
+    """Сколько ДОПОЛНИТЕЛЬНЫХ копий (сверх самой улучшаемой карты) и монет
+    нужно для перехода с current_level на +1 — строго по табличным
+    значениям FUSE_TABLE, без умножения и без зависимости от редкости.
+    Возвращает (extra_copies, cost) или (None, None), если уровень уже
+    максимальный (MAX_CARD_LEVEL)."""
+    from config import FUSE_TABLE
+    return FUSE_TABLE.get(current_level, (None, None))
 
 
 def get_effective_stats(attack, hp, level):
@@ -951,30 +948,33 @@ def get_effective_stats(attack, hp, level):
 
 
 def fuse_cards(user_id, card_id):
-    """Объединяет N копий карты + списывает монеты для повышения уровня.
-    N и цена зависят от редкости карты и её текущего уровня — см.
-    get_fuse_requirements. Возвращает (success, new_level_or_error_message)."""
+    """Улучшает карту на +1 уровень по табличным требованиям FUSE_TABLE —
+    тратит extra_copies ДОПОЛНИТЕЛЬНЫХ копий (сама улучшаемая карта в счёт
+    не идёт и не исчезает) + cost монет. Возвращает
+    (success, new_level_or_error_message)."""
+    from config import MAX_CARD_LEVEL
+
     existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
     if not existing.data:
         return False, "У вас нет этой карты"
     row = existing.data[0]
     current_level = row.get('card_level', 1) or 1
 
-    card = get_card_by_id(card_id)
-    if not card:
-        return False, "Карта не найдена"
+    extra_needed, cost = get_fuse_requirements(current_level)
+    if extra_needed is None:
+        return False, f"Карта уже максимального уровня ({MAX_CARD_LEVEL})"
 
-    copies_required, cost = get_fuse_requirements(card['rarity'], current_level)
-
-    if row['count'] < copies_required:
-        return False, f"Нужно минимум {copies_required} копии (у вас {row['count']})"
+    # Основная улучшаемая карта не считается дополнительной копией — нужно
+    # иметь её (1) + extra_needed копий сверху.
+    if row['count'] < extra_needed + 1:
+        have_extra = max(row['count'] - 1, 0)
+        return False, f"Нужно {extra_needed} доп. копии (у вас {have_extra})"
 
     if cost > 0 and not update_coins(user_id, -cost):
         return False, f"Нужно {cost} 💰 на улучшение"
 
-    # +1, т.к. слияние объединяет copies_required копий в ОДНУ прокачанную —
-    # копия не исчезает, а становится картой уровнем выше.
-    new_count = row['count'] - copies_required + 1
+    # Тратятся только extra_needed копий — основная остаётся (уже на новом уровне).
+    new_count = row['count'] - extra_needed
     new_level = current_level + 1
 
     # Атомарный клейм по count, который только что прочитали — иначе двойной

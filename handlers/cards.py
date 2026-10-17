@@ -199,16 +199,20 @@ def inventory_nav(call):
 
     markup.row(squad_btn)  # Добавляем кнопку отряда первой строкой
 
-    # КНОПКА УЛУЧШЕНИЯ (слияние дублей) — требование копий и цена растут с
-    # уровнем и зависят от редкости, см. get_fuse_requirements
-    copies_needed, fuse_cost = get_fuse_requirements(rarity, level)
-    if item['count'] >= copies_needed:
+    # КНОПКА УЛУЧШЕНИЯ (слияние дублей) — требование доп. копий и цена по
+    # таблице уровней (см. get_fuse_requirements), одинаковой для всех
+    # редкостей. Сама карта в счёт дополнительных копий не идёт.
+    extra_needed, fuse_cost = get_fuse_requirements(level)
+    have_extra = max(item['count'] - 1, 0)
+    if extra_needed is None:
+        fuse_btn = types.InlineKeyboardButton("🔀 Максимальный уровень", callback_data="ignore")
+    elif have_extra >= extra_needed:
         fuse_btn = types.InlineKeyboardButton(
-            f"🔀 Улучшить ({item['count']}/{copies_needed}, {fuse_cost}💰)",
+            f"🔀 Улучшить (+{extra_needed} карт, {fuse_cost}💰)",
             callback_data=f"fuse_card:{card['id']}:{rarity}:{index}")
     else:
         fuse_btn = types.InlineKeyboardButton(
-            f"🔀 Улучшить ({item['count']}/{copies_needed}, {fuse_cost}💰)",
+            f"🔀 Улучшить ({have_extra}/{extra_needed} доп. карт, {fuse_cost}💰)",
             callback_data="ignore")
     markup.row(fuse_btn)
 
