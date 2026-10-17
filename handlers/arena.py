@@ -3,7 +3,7 @@ import time
 
 from telebot import types
 
-from config import BATTLE_WEIGHTS, EVENT_TEXTS, CLAN_WAR_STAKE, CLAN_WAR_BONUS
+from config import BATTLE_WEIGHTS, EVENT_TEXTS, CLAN_WAR_STAKE, CLAN_WAR_BONUS, CLAN_WAR_PERSONAL_REWARD
 from database import (get_user_data, get_clan_info, get_user_squad, join_queue,
                       leave_queue, find_opponent, update_battle_stats, update_task_progress,
                       get_clan_war_status, get_clans_for_war, start_clan_war, apply_clan_war_result,
@@ -92,7 +92,8 @@ def _render_clan_war_menu(call, clan, page):
            f"{cooldown_txt}\n\n"
            f"⚔️ Ставка с вас лично: <b>{CLAN_WAR_STAKE} 💰</b> (не из казны — объявить войну "
            f"может любой участник клана, платит тот, кто объявил).\n"
-           f"Победитель получает обе ставки + {CLAN_WAR_BONUS} 💰 в казну клана.\n\n"
+           f"Победитель получает обе ставки + {CLAN_WAR_BONUS} 💰 в казну клана, "
+           f"а победивший участник лично получает +{CLAN_WAR_PERSONAL_REWARD} 💰.\n\n"
            f"Выберите клан для атаки:")
 
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -143,7 +144,8 @@ def clan_war_attack_confirm(call):
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       f"⚠️ Объявить войну клану <b>{target_clan['name']}</b>?\n\n"
                       f"С вас спишется <b>{CLAN_WAR_STAKE} 💰</b> лично. Если проиграете — ставка сгорает.\n"
-                      f"Если выиграете — в казну <b>{clan['name']}</b> уйдёт {CLAN_WAR_STAKE * 2 + CLAN_WAR_BONUS} 💰.",
+                      f"Если выиграете — в казну <b>{clan['name']}</b> уйдёт {CLAN_WAR_STAKE * 2 + CLAN_WAR_BONUS} 💰, "
+                      f"а вам лично +{CLAN_WAR_PERSONAL_REWARD} 💰.",
                       reply_markup=markup, parse_mode="HTML")
 
 
@@ -515,7 +517,7 @@ def run_clan_war_battle(challenger_id, challenger_chat_id, challenger_clan, targ
         w_dmg, l_dmg = p2_dmg_total, p1_dmg_total
 
     update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
-    apply_clan_war_result(winner_clan['id'], loser_clan['id'])
+    apply_clan_war_result(winner_clan['id'], loser_clan['id'], winner_id)
 
     update_task_progress(challenger_id, "arena_battle", "daily")
     update_task_progress(target_id, "arena_battle", "daily")
@@ -526,7 +528,7 @@ def run_clan_war_battle(challenger_id, challenger_chat_id, challenger_clan, targ
     res_win = (f"🏆 <b>ПОБЕДА В КЛАНОВОЙ ВОЙНЕ!</b>\n\n"
                f"Клан <b>{winner_clan['name']}</b> разгромил <b>{loser_clan['name']}</b>!\n"
                f"💰 В казну клана: +{treasury_gain}\n"
-               f"⚔️ Личная награда: +10 монет, +25 рейтинга")
+               f"⚔️ Личная награда: +{10 + CLAN_WAR_PERSONAL_REWARD} монет, +25 рейтинга")
 
     res_lose = (f"💀 <b>ПОРАЖЕНИЕ В КЛАНОВОЙ ВОЙНЕ...</b>\n\n"
                 f"Клан <b>{loser_clan['name']}</b> проиграл клану <b>{winner_clan['name']}</b>.\n"

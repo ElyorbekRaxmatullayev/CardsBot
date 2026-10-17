@@ -6,13 +6,13 @@ from telebot import types
 
 from config import RARITY_ORDER, RARITY_CONFIG
 from database import (add_new_card_to_db, get_user_data, update_coins, update_gems, get_all_users_count,
-                      update_card, delete_card, get_cards_paginated, count_card_owners, add_card_to_user,
+                      update_card, delete_card, get_cards_paginated, count_card_owners, add_card_to_user, add_cards_to_user,
                       create_event, end_event, get_events_admin,
                       search_users, set_user_banned, get_public_profile,
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
                       toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids,
-                      set_card_stars_price, grant_premium)
+                      set_card_stars_price, grant_premium, grant_bonus_to_all_users)
 from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
@@ -69,6 +69,9 @@ def admin_start(message, user_id=None):
     markup.row(
         types.InlineKeyboardButton("💍 Браки", callback_data="adm_marriages:0"),
         types.InlineKeyboardButton("📣 Рассылка", callback_data="adm_broadcast"),
+    )
+    markup.row(
+        types.InlineKeyboardButton("🎁 Бонусы пользователям", callback_data="adm_bonus_all"),
     )
     row = [types.InlineKeyboardButton("📢 Каналы", callback_data="adm_channels")]
     if is_head_admin(user_id):
@@ -686,7 +689,9 @@ def adm_give_card_start(call):
         return
     bot.answer_callback_query(call.id)
     msg = bot.send_message(call.message.chat.id,
-                           "🃏 Введи: <b>USER_ID CARD_ID</b>\nПример: <code>123456789 5</code>",
+                           "🃏 Введи: <b>USER_ID CARD_ID [КОЛИЧЕСТВО]</b>\n"
+                           "Пример: <code>123456789 5</code> или <code>123456789 5 10</code>\n"
+                           "Если количество не указано — выдаётся 1 шт.",
                            parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, call.from_user.id, _give_card_step)
 
@@ -695,16 +700,20 @@ def _give_card_step(message):
     try:
         parts = message.text.strip().split()
         uid, card_id = int(parts[0]), int(parts[1])
+        amount = int(parts[2]) if len(parts) > 2 else 1
+        if amount < 1:
+            bot.send_message(message.chat.id, "❌ Количество должно быть не меньше 1.", reply_markup=_adm_back_markup())
+            return
         user = get_user_data(uid)
         if not user:
             bot.send_message(message.chat.id, "❌ Пользователь не найден.", reply_markup=_adm_back_markup())
             return
-        add_card_to_user(uid, card_id)
+        add_cards_to_user(uid, card_id, amount)
         bot.send_message(message.chat.id,
-                         f"✅ Карта #{card_id} выдана пользователю <b>{user['first_name']}</b>",
+                         f"✅ Карта #{card_id} x{amount} выдана пользователю <b>{user['first_name']}</b>",
                          reply_markup=_adm_back_markup(), parse_mode="HTML")
     except:
-        bot.send_message(message.chat.id, "❌ Ошибка. Формат: USER_ID CARD_ID", reply_markup=_adm_back_markup())
+        bot.send_message(message.chat.id, "❌ Ошибка. Формат: USER_ID CARD_ID [КОЛИЧЕСТВО]", reply_markup=_adm_back_markup())
 
 
 # --- СОБЫТИЯ ---
@@ -1195,3 +1204,105 @@ def _run_broadcast(admin_id, report_chat_id, from_chat_id, message_id):
                          parse_mode="HTML")
     except Exception:
         pass
+
+
+# --- БОНУСЫ ВСЕМ ПОЛЬЗОВАТЕЛЯМ ---
+
+_bonus_all_pending = {}  # admin_id -> (coins, gems, free_draws)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_bonus_all")
+def adm_bonus_all_start(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id,
+                           "🎁 <b>Бонусы всем пользователям</b>\n\n"
+                           "Введи через пробел: <b>МОНЕТЫ ГЕМЫ ОТКРЫТИЯ</b>\n"
+                           "Пример: <code>100 10 2</code> — всем по 100 монет, "
+                           "10 гемов и 2 бесплатных открытия карт.\n"
+                           "Любое значение можно поставить в 0.\n\n"
+                           "Отмена — /cancel", parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _bonus_all_step)
+
+
+def _bonus_all_step(message):
+    admin_id = message.from_user.id
+    if message.text == '/cancel':
+        bot.send_message(message.chat.id, "Отменено.")
+        return
+    try:
+        parts = message.text.strip().split()
+        coins, gems, free_draws = int(parts[0]), int(parts[1]), int(parts[2])
+        if coins < 0 or gems < 0 or free_draws < 0:
+            raise ValueError
+    except (ValueError, IndexError):
+        bot.send_message(message.chat.id, "❌ Ошибка. Формат: МОНЕТЫ ГЕМЫ ОТКРЫТИЯ (три целых числа ≥ 0)",
+                         reply_markup=_adm_back_markup())
+        return
+
+    _bonus_all_pending[admin_id] = (coins, gems, free_draws)
+    total = get_all_users_count()
+
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("✅ Выдать всем", callback_data="adm_bonus_all_confirm"),
+        types.InlineKeyboardButton("❌ Отмена", callback_data="adm_bonus_all_cancel"),
+    )
+    bot.send_message(message.chat.id,
+                     f"⚠️ Выдать <b>{total}</b> пользователям:\n"
+                     f"💰 +{coins} монет\n"
+                     f"💎 +{gems} гемов\n"
+                     f"🎴 +{free_draws} бесплатных открытий карт?",
+                     reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_bonus_all_cancel")
+def adm_bonus_all_cancel(call):
+    bot.answer_callback_query(call.id, "Отменено")
+    _bonus_all_pending.pop(call.from_user.id, None)
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_bonus_all_confirm")
+def adm_bonus_all_confirm(call):
+    admin_id = call.from_user.id
+    if not is_admin(admin_id):
+        return
+    pending = _bonus_all_pending.pop(admin_id, None)
+    if not pending:
+        bot.answer_callback_query(call.id, "❌ Бонус не найден, попробуйте заново", show_alert=True)
+        return
+    coins, gems, free_draws = pending
+    affected = grant_bonus_to_all_users(coins, gems, free_draws)
+
+    bot.answer_callback_query(call.id, "✅ Бонусы выданы")
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
+                      f"✅ <b>Бонусы выданы {affected} пользователям</b>\n\n"
+                      f"💰 +{coins} монет\n"
+                      f"💎 +{gems} гемов\n"
+                      f"🎴 +{free_draws} бесплатных открытий карт",
+                      reply_markup=_adm_back_markup(), parse_mode="HTML")
+
+    threading.Thread(
+        target=_notify_bonus_all,
+        args=(coins, gems, free_draws),
+        daemon=True,
+    ).start()
+
+
+def _notify_bonus_all(coins, gems, free_draws):
+    parts = []
+    if coins: parts.append(f"💰 +{coins} монет")
+    if gems: parts.append(f"💎 +{gems} гемов")
+    if free_draws: parts.append(f"🎴 +{free_draws} бесплатных открытий карт")
+    if not parts:
+        return
+    text = "🎁 <b>Вам начислен бонус от администрации!</b>\n\n" + "\n".join(parts)
+
+    for uid in get_all_user_ids():
+        try:
+            bot.send_message(uid, text, parse_mode="HTML")
+        except Exception:
+            pass
+        time.sleep(0.05)

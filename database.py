@@ -939,14 +939,13 @@ def get_user_rank(user_id):
 
 # --- УЛУЧШЕНИЕ КАРТ (FUSION) ---
 
-def get_fuse_requirements(current_level):
-    """Сколько ДОПОЛНИТЕЛЬНЫХ копий (сверх самой улучшаемой карты) и монет
-    нужно для перехода с current_level на +1 — строго по табличным
-    значениям FUSE_TABLE, без умножения и без зависимости от редкости.
-    Возвращает (extra_copies, cost) или (None, None), если уровень уже
-    максимальный (MAX_CARD_LEVEL)."""
-    from config import FUSE_TABLE
-    return FUSE_TABLE.get(current_level, (None, None))
+def get_fuse_requirements(current_level=None):
+    """Сколько копий (всего, включая саму карту) и монет нужно для
+    слияния — плоско, не зависит от уровня/редкости (по просьбе откатили
+    табличную систему роста). current_level принимается для совместимости
+    вызовов, но не используется."""
+    from config import FUSE_REQUIRED_COPIES, FUSE_COST_COINS
+    return FUSE_REQUIRED_COPIES, FUSE_COST_COINS
 
 
 def get_effective_stats(attack, hp, level):
@@ -962,33 +961,25 @@ def get_effective_stats(attack, hp, level):
 
 
 def fuse_cards(user_id, card_id):
-    """Улучшает карту на +1 уровень по табличным требованиям FUSE_TABLE —
-    тратит extra_copies ДОПОЛНИТЕЛЬНЫХ копий (сама улучшаемая карта в счёт
-    не идёт и не исчезает) + cost монет. Возвращает
+    """Улучшает карту на +1 уровень — ровно FUSE_REQUIRED_COPIES копий
+    (всего, включая саму карту) + FUSE_COST_COINS монет, одинаково на любом
+    уровне (без роста, без потолка по уровню). Возвращает
     (success, new_level_or_error_message)."""
-    from config import MAX_CARD_LEVEL
+    copies_required, cost = get_fuse_requirements()
 
     existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
-    if not existing.data:
-        return False, "У вас нет этой карты"
+    if not existing.data or existing.data[0]['count'] < copies_required:
+        have = existing.data[0]['count'] if existing.data else 0
+        return False, f"Нужно минимум {copies_required} копии (у вас {have})"
     row = existing.data[0]
     current_level = row.get('card_level', 1) or 1
-
-    extra_needed, cost = get_fuse_requirements(current_level)
-    if extra_needed is None:
-        return False, f"Карта уже максимального уровня ({MAX_CARD_LEVEL})"
-
-    # Основная улучшаемая карта не считается дополнительной копией — нужно
-    # иметь её (1) + extra_needed копий сверху.
-    if row['count'] < extra_needed + 1:
-        have_extra = max(row['count'] - 1, 0)
-        return False, f"Нужно {extra_needed} доп. копии (у вас {have_extra})"
 
     if cost > 0 and not update_coins(user_id, -cost):
         return False, f"Нужно {cost} 💰 на улучшение"
 
-    # Тратятся только extra_needed копий — основная остаётся (уже на новом уровне).
-    new_count = row['count'] - extra_needed
+    # +1, т.к. слияние объединяет copies_required копий в ОДНУ прокачанную —
+    # карта не исчезает, а становится уровнем выше.
+    new_count = row['count'] - copies_required + 1
     new_level = current_level + 1
 
     # Атомарный клейм по count, который только что прочитали — иначе двойной
@@ -1060,6 +1051,19 @@ def get_all_user_ids():
     """Все telegram_id пользователей — для рассылки"""
     res = supabase.table("users").select("telegram_id").execute()
     return [row['telegram_id'] for row in (res.data or [])]
+
+
+def grant_bonus_to_all_users(coins=0, gems=0, free_draws=0):
+    """Начисляет монеты/гемы/бесплатные открытия карт ВСЕМ пользователям одним
+    UPDATE (а не по одному в цикле) — иначе на большом количестве игроков
+    это было бы слишком медленно. Возвращает число затронутых пользователей."""
+    cur = supabase.conn.execute(
+        "UPDATE users SET coins = coins + ?, gems = gems + ?, "
+        "free_draws_remaining = free_draws_remaining + ?",
+        (coins, gems, free_draws)
+    )
+    supabase.conn.commit()
+    return cur.rowcount
 
 
 # --- АДМИНЫ ---
@@ -1595,10 +1599,12 @@ def start_clan_war(initiator_id, challenger_clan_id, target_clan_id):
     return True, "ok", challenger_id, target_id, challenger_clan, target_clan
 
 
-def apply_clan_war_result(winner_clan_id, loser_clan_id):
+def apply_clan_war_result(winner_clan_id, loser_clan_id, winner_user_id=None):
     """Зачисляет в казну победителя обе ставки + системный бонус, ставит
-    кулдаун обоим кланам и увеличивает счётчик побед в войнах"""
-    from config import CLAN_WAR_STAKE, CLAN_WAR_BONUS
+    кулдаун обоим кланам и увеличивает счётчик побед в войнах. Если передан
+    winner_user_id — дополнительно начисляет победившему участнику личную
+    награду (CLAN_WAR_PERSONAL_REWARD), помимо казны клана."""
+    from config import CLAN_WAR_STAKE, CLAN_WAR_BONUS, CLAN_WAR_PERSONAL_REWARD
     now = datetime.now(timezone.utc).isoformat()
 
     winner = get_clan_info(winner_clan_id)
@@ -1610,6 +1616,9 @@ def apply_clan_war_result(winner_clan_id, loser_clan_id):
         }).eq("id", winner_clan_id).execute()
 
     supabase.table("clans").update({"last_war_at": now}).eq("id", loser_clan_id).execute()
+
+    if winner_user_id is not None:
+        update_coins(winner_user_id, CLAN_WAR_PERSONAL_REWARD)
 
 
 def get_top_clans_by_treasury(limit=10):
