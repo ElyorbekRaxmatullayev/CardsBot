@@ -4,7 +4,7 @@ from telebot import types
 from telebot.types import LabeledPrice
 
 from config import (STARS_GEMS_PACKAGES, STARS_COINS_PACKAGES, STARS_CARD_PRICES,
-                    STARS_VIP_PACKAGES, RARITY_CONFIG)
+                    STARS_VIP_PACKAGES, RARITY_CONFIG, PACK_CONFIG, PREMIUM_BONUS_PACKS)
 from database import (get_all_cards, add_card_to_user, on_card_obtained, get_card_by_id,
                       update_gems, update_coins, grant_premium, grant_premium_bonus_packs,
                       record_star_payment, get_limited_cards_with_price)
@@ -306,8 +306,9 @@ def handle_successful_payment(message):
         # иначе через месяц у пользователя молча списались бы Gems, хотя он
         # платил звёздами и мог их вообще не копить
         supabase.table("users").update({"premium_auto_renew": False}).eq("telegram_id", user_id).execute()
-        bonus_granted = grant_premium_bonus_packs(user_id)
-        bonus_txt = "\n🎁 Плюс бонус паков за первую покупку Premium!" if bonus_granted else ""
+        grant_premium_bonus_packs(user_id)
+        gift_txt = "\n".join(f"📦 {PACK_CONFIG[p]['name']} x{c}" for p, c in PREMIUM_BONUS_PACKS.items())
+        bonus_txt = f"\n🎁 Бонус-паки:\n{gift_txt}"
         bot.send_message(message.chat.id,
                          f"✅ Спасибо за покупку! Premium активирован на {days} дней.{bonus_txt}",
                          parse_mode="HTML")

@@ -1243,15 +1243,11 @@ def grant_premium(user_id, days):
 
 
 def grant_premium_bonus_packs(user_id):
-    """Одноразовый (навсегда) подарок паков при ПЕРВОЙ покупке Premium —
-    любым способом (Gems или Stars). Атомарный клейм по premium_bonus_claimed,
-    чтобы повторная покупка/продление или гонка из двух запросов не выдали
-    его повторно. Возвращает True, если паки реально выданы сейчас."""
+    """Бонус-паки при КАЖДОЙ покупке Premium за Stars. Защита от повторной
+    выдачи за один и тот же платёж — на стороне вызывающего кода
+    (record_star_payment по charge_id гарантирует, что успешная оплата
+    обрабатывается ровно один раз), поэтому здесь просто выдаём паки."""
     from config import PREMIUM_BONUS_PACKS
-    claim = supabase.table("users").update({"premium_bonus_claimed": 1}).eq(
-        "telegram_id", user_id).eq("premium_bonus_claimed", 0).execute()
-    if not claim.count:
-        return False
     for pack_type, count in PREMIUM_BONUS_PACKS.items():
         add_pack_to_user(user_id, pack_type, count)
     return True

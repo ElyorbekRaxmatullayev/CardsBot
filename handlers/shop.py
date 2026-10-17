@@ -139,7 +139,7 @@ def premium_menu_reply(message, user_id=None):
            f"Статус: {status_txt}\n\n"
            f"Что даёт Premium:\n"
            f"• Кулдаун карты: {cooldown_str} (вместо {DROP_COOLDOWN}ч)\n"
-           f"• 🎁 Бонус-паки при ПЕРВОЙ покупке (один раз навсегда)\n\n"
+           f"• 🎁 Бонус-паки при КАЖДОЙ покупке\n\n"
            f"Оплата — Telegram Stars ⭐:")
 
     markup = types.InlineKeyboardMarkup()
