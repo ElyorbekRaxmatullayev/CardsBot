@@ -3,7 +3,7 @@ import random
 from telebot import types
 
 from database import (get_or_create_user, get_user_data, get_top_by_coins,
-                      get_top_by_referrals, get_top_by_cards_count, get_top_by_value,
+                      get_top_by_referrals, get_top_by_cards_count, get_top_by_gems,
                       check_daily_bonus, set_daily_bonus_taken,
                       add_card_to_user, get_all_cards, get_user_gems, get_user_rank,
                       get_top_by_damage, check_farm_available, do_farm_coins,
@@ -71,7 +71,7 @@ def get_rating_markup():
         types.InlineKeyboardButton("👥 По рефералам", callback_data="top_refs"),
         types.InlineKeyboardButton("💰 По коинам", callback_data="top_coins"),
         types.InlineKeyboardButton("🃏 По кол-ву карт", callback_data="top_count"),
-        types.InlineKeyboardButton("💎 По ценности", callback_data="top_value"),
+        types.InlineKeyboardButton("💎 По гемам", callback_data="top_gems"),
         types.InlineKeyboardButton("⚔️ По урону (Арена)", callback_data="top_damage"),
         types.InlineKeyboardButton("🏰 Казна клана", callback_data="top_treasury"),
         types.InlineKeyboardButton("🏰 Победы в войнах", callback_data="top_warwins"),
@@ -281,9 +281,10 @@ def show_top(call):
     elif category == "count":
         data = get_top_by_cards_count()
         metric, field = "🃏", "count"
-    elif category == "value":
-        data = get_top_by_value()
-        metric, field = "💎", "value"
+    elif category == "gems":
+        data = get_top_by_gems()
+        metric, field = "💎", "gems"
+        txt = "💎 <b>Топ по гемам</b>\n\n"
     elif category == "damage":
         data = get_top_by_damage()
         metric, field = "⚔️", "value"

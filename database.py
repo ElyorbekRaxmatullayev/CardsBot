@@ -283,27 +283,10 @@ def get_top_by_cards_count(limit=10):
     return result
 
 
-def get_top_by_value(limit=10):
-    """Топ по суммарной стоимости коллекции (value карты * количество).
-    Джойн card(value) делаем вручную в Python — мок supabase поверх sqlite
-    не умеет произвольные embedded-select'ы вида cards(value), только
-    захардкоженные cards(*) в паре мест, поэтому полагаться на него тут нельзя."""
-    card_values = {c['id']: (c.get('value') or 0) for c in (get_all_cards() or [])}
-
-    res = supabase.table("user_cards").select("user_id, card_id, count").execute()
-    totals = {}
-    for row in (res.data or []):
-        uid = row['user_id']
-        value = card_values.get(row['card_id'], 0) * (row.get('count') or 0)
-        totals[uid] = totals.get(uid, 0) + value
-
-    sorted_ids = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:limit]
-    result = []
-    for uid, total in sorted_ids:
-        u = get_user_data(uid)
-        if u:
-            result.append({"first_name": u['first_name'], "value": total})
-    return result
+def get_top_by_gems(limit=10):
+    """Топ игроков по балансу Gems"""
+    res = supabase.table("users").select("first_name, gems").order("gems", desc=True).limit(limit).execute()
+    return [{"first_name": u['first_name'], "gems": u.get('gems') or 0} for u in (res.data or [])]
 
 
 # --- ЕЖЕДНЕВНЫЙ БОНУС ---
