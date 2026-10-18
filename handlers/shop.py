@@ -3,7 +3,9 @@ from telebot import types
 from config import PACK_CONFIG, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, STARS_VIP_PACKAGES
 from database import get_user_data, update_coins, update_gems, add_pack_to_user, is_premium, update_task_progress
 from loader import bot, supabase
-from utils import safe_edit_message, safe_send_message, reply_match
+from utils import safe_edit_message, safe_send_message, reply_match, register_next_step_handler_for_user
+
+_pack_buy_pending = {}  # user_id -> pack_type, ждём ввода количества
 
 
 # --- МАГАЗИН: ГЛАВНОЕ МЕНЮ ---
@@ -74,34 +76,68 @@ def shop_buy_pack(call):
     cfg = PACK_CONFIG.get(pack_type)
     if not cfg:
         return
-    user_id = call.from_user.id
+    if cfg['price_gems'] <= 0 and cfg['price_coins'] <= 0:
+        bot.answer_callback_query(call.id, "Этот пак нельзя купить здесь", show_alert=True)
+        return
+
+    bot.answer_callback_query(call.id)
+    _pack_buy_pending[call.from_user.id] = pack_type
+
+    price_parts = []
+    if cfg['price_coins'] > 0:
+        price_parts.append(f"💰{cfg['price_coins']}")
+    if cfg['price_gems'] > 0:
+        price_parts.append(f"💎{cfg['price_gems']}")
+    price_str = " / ".join(price_parts)
+
+    msg = bot.send_message(call.message.chat.id,
+                           f"📦 <b>{cfg['name']}</b> — {price_str} за штуку\n\n"
+                           f"Сколько штук купить? Введи число:",
+                           parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _pack_buy_qty_step)
+
+
+def _pack_buy_qty_step(message):
+    user_id = message.from_user.id
+    pack_type = _pack_buy_pending.pop(user_id, None)
+    cfg = PACK_CONFIG.get(pack_type)
+    if not cfg:
+        return
+
+    try:
+        qty = int(message.text.strip())
+        if qty < 1:
+            raise ValueError
+    except (ValueError, AttributeError):
+        bot.send_message(message.chat.id, "❌ Введи целое число не меньше 1.")
+        return
+
     user = get_user_data(user_id)
     gems = user.get('gems', 0) or 0
 
     # Приоритет: сначала Gems, потом Coins
     if cfg['price_gems'] > 0:
-        if gems < cfg['price_gems']:
-            bot.answer_callback_query(call.id,
-                                      f"Недостаточно Gems! Нужно {cfg['price_gems']} 💎\n"
-                                      f"У вас: {gems} Gems", show_alert=True)
+        total_cost = cfg['price_gems'] * qty
+        if gems < total_cost:
+            bot.send_message(message.chat.id,
+                             f"❌ Недостаточно Gems! Нужно {total_cost} 💎 за {qty} шт.\n"
+                             f"У вас: {gems} Gems")
             return
-        update_gems(user_id, -cfg['price_gems'])
+        update_gems(user_id, -total_cost)
     elif cfg['price_coins'] > 0:
-        if user['coins'] < cfg['price_coins']:
-            bot.answer_callback_query(call.id,
-                                      f"Недостаточно монет! Нужно {cfg['price_coins']} 💰\n"
-                                      f"У вас: {user['coins']}", show_alert=True)
+        total_cost = cfg['price_coins'] * qty
+        if user['coins'] < total_cost:
+            bot.send_message(message.chat.id,
+                             f"❌ Недостаточно монет! Нужно {total_cost} 💰 за {qty} шт.\n"
+                             f"У вас: {user['coins']}")
             return
-        update_coins(user_id, -cfg['price_coins'])
-        update_task_progress(user_id, "spend_coins", "weekly", increment=cfg['price_coins'])
+        update_coins(user_id, -total_cost)
+        update_task_progress(user_id, "spend_coins", "weekly", increment=total_cost)
     else:
-        bot.answer_callback_query(call.id, "Этот пак нельзя купить здесь", show_alert=True)
         return
 
-    add_pack_to_user(user_id, pack_type)
-    bot.answer_callback_query(call.id, f"✅ {cfg['name']} добавлен в инвентарь!")
-    # Обновляем экран
-    shop_packs(call)
+    add_pack_to_user(user_id, pack_type, qty)
+    bot.send_message(message.chat.id, f"✅ {cfg['name']} x{qty} добавлены в инвентарь!")
 
 
 # --- PREMIUM: ОТДЕЛЬНАЯ КНОПКА В REPLY-КЛАВИАТУРЕ, ОПЛАТА ТОЛЬКО ЗА STARS ---
