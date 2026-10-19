@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import threading
 
 class Response:
     def __init__(self, data, count=None):
@@ -7,8 +8,9 @@ class Response:
         self.count = count
 
 class QueryBuilder:
-    def __init__(self, conn, table):
+    def __init__(self, conn, table, lock):
         self.conn = conn
+        self.lock = lock
         self.table = table
         self._select = "*"
         self._count = None
@@ -112,21 +114,29 @@ class QueryBuilder:
         return self
 
     def execute(self):
-        cur = self.conn.cursor()
-        
-        try:
-            if self._action == "select":
-                return self._execute_select(cur)
-            elif self._action == "insert":
-                return self._execute_insert(cur)
-            elif self._action == "update":
-                return self._execute_update(cur)
-            elif self._action == "delete":
-                return self._execute_delete(cur)
-            elif self._action == "upsert":
-                return self._execute_upsert(cur)
-        finally:
-            self.conn.commit()
+        # ВАЖНО: один sqlite3-коннекшн на весь процесс (check_same_thread=False),
+        # а бот обрабатывает апдейты в пуле потоков (num_threads=20 в loader.py).
+        # Без лока конкурентные execute()/commit() из разных потоков на одном
+        # connection/cursor реально ломали sqlite на проде — в логе это было
+        # "cannot commit transaction - SQL statements in progress", "bad
+        # parameter or other API misuse" и "SystemError: error return without
+        # exception set" (см. инцидент с пропадающими паками). Лок сериализует
+        # ВСЕ запросы к базе — ровно то же самое, что обычный однопоточный доступ.
+        with self.lock:
+            cur = self.conn.cursor()
+            try:
+                if self._action == "select":
+                    return self._execute_select(cur)
+                elif self._action == "insert":
+                    return self._execute_insert(cur)
+                elif self._action == "update":
+                    return self._execute_update(cur)
+                elif self._action == "delete":
+                    return self._execute_delete(cur)
+                elif self._action == "upsert":
+                    return self._execute_upsert(cur)
+            finally:
+                self.conn.commit()
 
     def or_(self, val):
         # e.g., "user1_id.eq.123,user2_id.eq.123"
@@ -317,9 +327,23 @@ class MockSupabaseClient:
         # при удалении карты админом записи в user_squads/user_cards оставались
         # висеть "призраками" — карты нет, а слот в отряде всё ещё занят.
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # Один общий лок на весь connection — см. комментарий в
+        # QueryBuilder.execute(). Любой прямой доступ к self.conn (в обход
+        # QueryBuilder) ОБЯЗАН идти через execute_raw() ниже, а не напрямую,
+        # иначе лок не защитит от той же гонки потоков.
+        self.lock = threading.Lock()
 
     def table(self, name):
-        return QueryBuilder(self.conn, name)
+        return QueryBuilder(self.conn, name, self.lock)
+
+    def execute_raw(self, sql, params=()):
+        """Для массовых UPDATE без построителя запросов (напр. начисление
+        бонуса всем пользователям одним запросом) — под тем же локом, что и
+        обычные table()-запросы, иначе это снова гонка потоков на connection."""
+        with self.lock:
+            cur = self.conn.execute(sql, params)
+            self.conn.commit()
+            return cur
 
 def create_client():
     return MockSupabaseClient()

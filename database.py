@@ -1119,12 +1119,11 @@ def grant_bonus_to_all_users(coins=0, gems=0, free_draws=0):
     """Начисляет монеты/гемы/бесплатные открытия карт ВСЕМ пользователям одним
     UPDATE (а не по одному в цикле) — иначе на большом количестве игроков
     это было бы слишком медленно. Возвращает число затронутых пользователей."""
-    cur = supabase.conn.execute(
+    cur = supabase.execute_raw(
         "UPDATE users SET coins = coins + ?, gems = gems + ?, "
         "free_draws_remaining = free_draws_remaining + ?",
         (coins, gems, free_draws)
     )
-    supabase.conn.commit()
     return cur.rowcount
 
 
