@@ -5,8 +5,9 @@ from loader import bot
 from config import RARITY_CONFIG, RARITY_ORDER, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM
 from database import get_all_cards, get_user_data, add_card_to_user, update_last_drop, get_user_inventory, \
     get_user_squad, toggle_squad_member, fuse_cards, is_premium, is_user_banned, update_task_progress, \
-    on_card_obtained, consume_free_draw, get_fuse_requirements, get_effective_stats
-from utils import reply_match
+    on_card_obtained, consume_free_draw, get_fuse_requirements, get_effective_stats, \
+    get_max_fuse_count, fuse_cards_max
+from utils import reply_match, safe_send_message, _msg_owners
 
 
 def drop_random_card_logic():
@@ -141,7 +142,7 @@ def inventory_menu(message, user_id=None):
     markup.add(*btns)
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
 
-    bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("inv_"))
@@ -216,6 +217,14 @@ def inventory_nav(call):
             callback_data="ignore")
     markup.row(fuse_btn)
 
+    # КНОПКА МГНОВЕННОЙ ПРОКАЧКИ — улучшает сразу на столько уровней, на
+    # сколько хватает копий и монет прямо сейчас (а не по одному клику).
+    max_fuses = get_max_fuse_count(call.from_user.id, card['id'])
+    if max_fuses > 0:
+        markup.row(types.InlineKeyboardButton(
+            f"⚡ Прокачать до предела (+{max_fuses} ур.)",
+            callback_data=f"fuse_max:{card['id']}:{rarity}:{index}"))
+
     # Стандартные кнопки навигации
     markup.row(
         types.InlineKeyboardButton("⬅️", callback_data=f"inv_nav:{rarity}:{index - 1}"),
@@ -238,13 +247,19 @@ def inventory_nav(call):
             bot.edit_message_media(media=media, chat_id=call.message.chat.id, message_id=call.message.message_id,
                                    reply_markup=markup)
         else:
+            # Открытие карты из списка (не навигация) — старое сообщение
+            # удаляется и шлётся новое, с НОВЫМ message_id, поэтому владельца
+            # нужно зарегистрировать заново, иначе защита кнопок (см.
+            # ButtonProtectionMiddleware) перестаёт действовать на это окно.
             bot.delete_message(call.message.chat.id, call.message.message_id)
             if is_video:
-                bot.send_video(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
-                               parse_mode="HTML")
+                sent = bot.send_video(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
+                                      parse_mode="HTML")
             else:
-                bot.send_photo(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
-                               parse_mode="HTML")
+                sent = bot.send_photo(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
+                                      parse_mode="HTML")
+            if sent:
+                _msg_owners[f"{sent.chat.id}_{sent.message_id}"] = call.from_user.id
     except Exception as e:
         # Раньше тут было голое except: bot.answer_callback_query(call.id) —
         # при любой ошибке (например у карты нет/битый image_file_id) экран
@@ -255,7 +270,8 @@ def inventory_nav(call):
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
-        bot.send_message(call.message.chat.id, caption, reply_markup=markup, parse_mode="HTML")
+        safe_send_message(bot, call.message.chat.id, caption, reply_markup=markup, parse_mode="HTML",
+                          owner_id=call.from_user.id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("squad_toggle:"))
@@ -292,6 +308,29 @@ def handler_fuse_card(call):
     if success:
         update_task_progress(call.from_user.id, "fuse_card", "daily")
         bot.answer_callback_query(call.id, f"✨ Карта улучшена до уровня {result}!", show_alert=True)
+    else:
+        bot.answer_callback_query(call.id, result, show_alert=True)
+        return
+
+    call.data = f"inv_nav:{rarity}:{index}"
+    inventory_nav(call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("fuse_max:"))
+def handler_fuse_max(call):
+    # fuse_max:CARD_ID:RARITY:INDEX
+    parts = call.data.split(":")
+    card_id = int(parts[1])
+    rarity = parts[2]
+    index = parts[3]
+
+    success, result, fuses_done, coins_spent = fuse_cards_max(call.from_user.id, card_id)
+
+    if success:
+        update_task_progress(call.from_user.id, "fuse_card", "daily", increment=fuses_done)
+        bot.answer_callback_query(call.id,
+                                  f"⚡ Карта улучшена на {fuses_done} ур. до уровня {result}! "
+                                  f"Потрачено: {coins_spent}💰", show_alert=True)
     else:
         bot.answer_callback_query(call.id, result, show_alert=True)
         return

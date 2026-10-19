@@ -497,13 +497,18 @@ def get_user_packs(user_id):
 
 
 def use_pack(user_id, pack_type):
-    """Тратит 1 пак из инвентаря. Возвращает True если успешно"""
+    """Тратит 1 пак из инвентаря. Возвращает True если успешно.
+    Атомарный клейм по прочитанному count (как в use_all_packs) — иначе
+    двойной клик/повтор апдейта от Telegram мог списать пак дважды за одно
+    и то же количество (потерянное обновление при гонке)."""
     existing = supabase.table("user_packs").select("*").eq("user_id", user_id).eq("pack_type", pack_type).execute()
     if not existing.data or existing.data[0]['count'] < 1:
         return False
-    new_count = existing.data[0]['count'] - 1
-    supabase.table("user_packs").update({"count": new_count}).eq("id", existing.data[0]['id']).execute()
-    return True
+    row = existing.data[0]
+    new_count = row['count'] - 1
+    claim = supabase.table("user_packs").update({"count": new_count}).eq(
+        "id", row['id']).eq("count", row['count']).execute()
+    return bool(claim.count)
 
 
 def use_all_packs(user_id, pack_type):
@@ -991,6 +996,63 @@ def fuse_cards(user_id, card_id):
             update_coins(user_id, cost)  # возвращаем монеты — слияние не состоялось
         return False, "Не удалось улучшить — попробуйте ещё раз"
     return True, new_level
+
+
+def get_max_fuse_count(user_id, card_id):
+    """Сколько раз подряд можно улучшить карту ПРЯМО СЕЙЧАС, упираясь либо
+    в копии, либо в монеты — для кнопки мгновенной прокачки «докуда хватит»."""
+    copies_required, cost = get_fuse_requirements()
+    net_loss = copies_required - 1  # копий тратится за 1 улучшение (сама карта остаётся)
+    if net_loss <= 0:
+        return 0
+
+    existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
+    if not existing.data:
+        return 0
+    count = existing.data[0]['count']
+    by_copies = max(0, (count - 1) // net_loss)
+    if cost <= 0:
+        return by_copies
+
+    user = get_user_data(user_id)
+    coins = (user.get('coins') or 0) if user else 0
+    by_coins = coins // cost
+    return min(by_copies, by_coins)
+
+
+def fuse_cards_max(user_id, card_id):
+    """Улучшает карту сразу на столько уровней, на сколько хватает копий и
+    монет прямо сейчас (кнопка «Улучшить до предела»). Возвращает
+    (success, new_level_or_error_message, fuses_done, coins_spent)."""
+    copies_required, cost = get_fuse_requirements()
+    net_loss = copies_required - 1
+
+    fuses = get_max_fuse_count(user_id, card_id)
+    if fuses <= 0:
+        existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
+        have = existing.data[0]['count'] if existing.data else 0
+        if have < copies_required:
+            return False, f"Нужно минимум {copies_required} копии (у вас {have})", 0, 0
+        return False, f"Нужно {cost} 💰 на улучшение", 0, 0
+
+    existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
+    row = existing.data[0]
+    current_level = row.get('card_level', 1) or 1
+    total_cost = cost * fuses
+    new_count = row['count'] - net_loss * fuses
+    new_level = current_level + fuses
+
+    if total_cost > 0 and not update_coins(user_id, -total_cost):
+        return False, f"Нужно {total_cost} 💰 на улучшение", 0, 0
+
+    # Тот же атомарный клейм по прочитанному count, что и в обычном fuse_cards
+    claim = supabase.table("user_cards").update({"count": new_count, "card_level": new_level}).eq(
+        "id", row['id']).eq("count", row['count']).execute()
+    if not claim.count:
+        if total_cost > 0:
+            update_coins(user_id, total_cost)
+        return False, "Не удалось улучшить — попробуйте ещё раз", 0, 0
+    return True, new_level, fuses, total_cost
 
 
 # --- КЛАН: ВЫХОД И ВСТУПЛЕНИЕ ---

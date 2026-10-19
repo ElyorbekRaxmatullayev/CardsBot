@@ -4,7 +4,7 @@ from database import (get_user_marriage, get_pending_marriage_request, get_sent_
                       propose_marriage, accept_marriage, reject_marriage, divorce, find_user_by_username,
                       get_user_data, is_user_banned)
 from loader import bot
-from utils import safe_edit_message, register_next_step_handler_for_user, reply_match
+from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user, reply_match
 
 
 @bot.message_handler(func=reply_match("❤️ Брак", "Брак"))
@@ -28,7 +28,7 @@ def marriage_main_menu(message, user_id=None):
                f"Вы состоите в счастливом браке! 🎉")
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("💔 Развестись", callback_data="marriage_divorce_confirm"))
-        bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+        safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
         return
 
     pending_in = get_pending_marriage_request(user_id)
@@ -45,7 +45,7 @@ def marriage_main_menu(message, user_id=None):
             types.InlineKeyboardButton("✅ Принять", callback_data=f"marriage_accept:{pending_in['id']}"),
             types.InlineKeyboardButton("❌ Отклонить", callback_data=f"marriage_reject:{pending_in['id']}")
         )
-        bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+        safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
         return
 
     pending_out = get_sent_marriage_request(user_id)
@@ -58,7 +58,7 @@ def marriage_main_menu(message, user_id=None):
            f"Вы одиноки. Вы можете предложить брак другому игроку, и его ник появится в вашем профиле!")
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("💍 Предложить брак", callback_data="marriage_propose"))
-    bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "marriage_propose")

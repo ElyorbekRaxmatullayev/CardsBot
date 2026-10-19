@@ -150,7 +150,7 @@ def about_handler(message):
            "❓ Аккаунты поддержки: @Devils_Time, @angeL_870\n\n"
            "<a href='https://telegra.ph/Politika-konfidencialnosti-Telegram-bota-12-24'>Политика конфиденциальности</a>\n"
            "<a href='https://telegra.ph/Polzovatelskoe-soglashenie'>Пользовательское соглашение</a>")
-    safe_send_message(bot, message.chat.id, txt, reply_markup=get_back_markup(), parse_mode="HTML")
+    safe_send_message(bot, message.chat.id, txt, reply_markup=get_back_markup(), parse_mode="HTML", owner_id=message.from_user.id)
 
 
 @bot.message_handler(func=reply_match("⚙️ Настройки", "Настройки"))
@@ -169,7 +169,7 @@ def settings_handler(message):
 
     txt = (f"⚙️ <b>Настройки</b>\n\n"
            f"Уведомления о картах: {status}")
-    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=message.from_user.id)
 
 
 # ─────────────────────────────────────────────

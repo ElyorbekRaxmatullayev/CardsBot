@@ -119,7 +119,7 @@ def clan_main_menu(message, user_id=None, page=0):
             markup.add(types.InlineKeyboardButton("🗑️ Удалить клан", callback_data=f"clan_delete_confirm_{user['clan_id']}"))
         else:
             markup.add(types.InlineKeyboardButton("🚪 Выйти из клана", callback_data="clan_leave_confirm"))
-        bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+        safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
     else:
         clans, total = get_all_clans_list(page)
         
@@ -146,7 +146,7 @@ def clan_main_menu(message, user_id=None, page=0):
 
         markup.add(types.InlineKeyboardButton("➕ Создать клан (1000 💰)", callback_data="clan_create"))
         markup.add(types.InlineKeyboardButton("🔍 Найти клан", callback_data="clan_search"))
-        bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+        safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("clan_list_page:"))
@@ -250,12 +250,12 @@ def _clan_search_step(message):
     back_markup.add(types.InlineKeyboardButton("🔙 Кланы", callback_data="clan_menu_back"))
 
     if message.text == '/cancel':
-        bot.send_message(message.chat.id, "Поиск отменён.", reply_markup=back_markup)
+        safe_send_message(bot, message.chat.id, "Поиск отменён.", reply_markup=back_markup, owner_id=message.from_user.id)
         return
     results = search_clans(message.text.strip())
     if not results:
-        bot.send_message(message.chat.id, "❌ Кланы не найдены. Попробуйте другое название.",
-                         reply_markup=back_markup)
+        safe_send_message(bot, message.chat.id, "❌ Кланы не найдены. Попробуйте другое название.",
+                          reply_markup=back_markup, owner_id=message.from_user.id)
         return
 
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -267,7 +267,7 @@ def _clan_search_step(message):
             callback_data=f"clan_join:{clan['id']}"
         ))
     markup.add(types.InlineKeyboardButton("🔙 Кланы", callback_data="clan_menu_back"))
-    bot.send_message(message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=message.from_user.id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("clan_join_req:"))
@@ -357,7 +357,7 @@ def process_clan_creation(message):
     back_markup.add(types.InlineKeyboardButton("🔙 Кланы", callback_data="clan_menu_back"))
 
     if message.text == '/cancel':
-        bot.send_message(message.chat.id, "Отменено.", reply_markup=back_markup)
+        safe_send_message(bot, message.chat.id, "Отменено.", reply_markup=back_markup, owner_id=message.from_user.id)
         return
 
     name = message.text.strip()
@@ -371,10 +371,10 @@ def process_clan_creation(message):
         success, res = create_clan(user_id, name)
         if success:
             update_task_progress(user_id, "spend_coins", "weekly", increment=CLAN_CREATE_COST)
-            bot.send_message(message.chat.id, f"✅ Клан <b>{name}</b> создан!",
-                             reply_markup=back_markup, parse_mode="HTML")
+            safe_send_message(bot, message.chat.id, f"✅ Клан <b>{name}</b> создан!",
+                              reply_markup=back_markup, parse_mode="HTML", owner_id=user_id)
         else:
             update_coins(user_id, CLAN_CREATE_COST)
-            bot.send_message(message.chat.id, f"❌ Ошибка: {res}", reply_markup=back_markup)
+            safe_send_message(bot, message.chat.id, f"❌ Ошибка: {res}", reply_markup=back_markup, owner_id=user_id)
     else:
-        bot.send_message(message.chat.id, "❌ Недостаточно средств.", reply_markup=back_markup)
+        safe_send_message(bot, message.chat.id, "❌ Недостаточно средств.", reply_markup=back_markup, owner_id=user_id)

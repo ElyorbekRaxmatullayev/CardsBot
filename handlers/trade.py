@@ -273,7 +273,7 @@ def _send_trade_card_picker(chat_id, user_id, target_id, target_name, page=0):
         bot.send_message(chat_id, "У вас нет карт для обмена.")
         _trade_state.pop(user_id, None)
         return
-    bot.send_message(chat_id, txt, reply_markup=markup, parse_mode="HTML")
+    safe_send_message(bot, chat_id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trade_toggle:"))
