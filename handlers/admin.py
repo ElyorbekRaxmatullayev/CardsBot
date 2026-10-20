@@ -12,7 +12,7 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
                       toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids,
-                      set_card_stars_price, grant_premium, grant_bonus_to_all_users)
+                      set_card_stars_price, grant_premium, grant_bonus_to_all_users, reset_user_account)
 from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
@@ -844,6 +844,7 @@ def adm_user_view(call):
         markup.add(types.InlineKeyboardButton("✅ Разбанить", callback_data=f"adm_user_ban:{uid}:0"))
     else:
         markup.add(types.InlineKeyboardButton("🚫 Забанить", callback_data=f"adm_user_ban:{uid}:1"))
+    markup.add(types.InlineKeyboardButton("🧨 Сбросить аккаунт", callback_data=f"adm_user_reset_confirm:{uid}"))
     markup.add(types.InlineKeyboardButton("🔙 В админку", callback_data="adm_back"))
 
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
@@ -858,6 +859,55 @@ def adm_user_ban_toggle(call):
     uid, flag = int(parts[1]), bool(int(parts[2]))
     set_user_banned(uid, flag)
     bot.answer_callback_query(call.id, "🚫 Игрок забанен" if flag else "✅ Игрок разбанен", show_alert=True)
+    call.data = f"adm_user_view:{uid}"
+    adm_user_view(call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_user_reset_confirm:"))
+def adm_user_reset_confirm(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    uid = int(call.data.split(":")[1])
+    user = get_user_data(uid)
+    if not user:
+        bot.answer_callback_query(call.id, "Пользователь не найден", show_alert=True)
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("✅ Да, сбросить", callback_data=f"adm_user_reset_do:{uid}"),
+        types.InlineKeyboardButton("❌ Отмена", callback_data=f"adm_user_view:{uid}"),
+    )
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id,
+                      f"⚠️ <b>Сбросить аккаунт {user['first_name']} (@{user.get('username') or '—'})?</b>\n\n"
+                      f"Это необратимо обнулит: монеты, Gems, ВСЕ карты, паки, отряд, "
+                      f"прогресс заданий/достижений, рейтинг и статистику боёв, Premium, "
+                      f"выведет из клана и разведёт брак (если есть), снимет активные "
+                      f"обмены/лоты на площадке. Бан-статус и история покупок Stars не трогаются.\n\n"
+                      f"Игрок начнёт как будто с нуля (100 монет, 5 бесплатных получений).",
+                      reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_user_reset_do:"))
+def adm_user_reset_do(call):
+    if not is_admin(call.from_user.id):
+        return
+    uid = int(call.data.split(":")[1])
+    summary = reset_user_account(uid)
+    if summary is None:
+        bot.answer_callback_query(call.id, "Пользователь не найден", show_alert=True)
+        return
+
+    bot.answer_callback_query(call.id, "✅ Аккаунт сброшен", show_alert=True)
+    user = get_user_data(uid)
+    name = user['first_name'] if user else str(uid)
+    bot.send_message(call.message.chat.id,
+                     f"🧨 <b>Аккаунт {name} сброшен.</b>\n\n"
+                     f"Удалено: 🎴 карт {summary['cards']}, 📦 паков {summary['packs']}, "
+                     f"⚔️ в отряде {summary['squad']}, 🎯 заданий {summary['tasks']}, "
+                     f"🏆 достижений {summary['achievements']}.",
+                     parse_mode="HTML")
     call.data = f"adm_user_view:{uid}"
     adm_user_view(call)
 

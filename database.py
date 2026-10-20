@@ -1561,6 +1561,67 @@ def find_user_by_username(username):
     return res.data[0] if res.data else None
 
 
+def reset_user_account(telegram_id):
+    """Полный сброс аккаунта игрока до состояния нового: валюта, карты,
+    паки, отряд, клан, брак, задания/достижения, активные обмены и лоты на
+    площадке — всё удаляется/обнуляется, как будто только что
+    зарегистрировался. НЕ трогает: telegram_id/username/first_name,
+    referrer_id (история — кто пригласил), бан-статус и star_payments
+    (платежи реальными деньгами — это не игровой прогресс, а финансовая
+    запись). Если игрок — лидер клана, клан НЕ удаляется и не трогается
+    (просто перестаёт быть его участником) — казну/лидерство клана при
+    необходимости нужно разрулить отдельно. Возвращает dict со сводкой или
+    None, если пользователь не найден."""
+    user = get_user_data(telegram_id)
+    if not user:
+        return None
+
+    divorce(telegram_id)
+
+    # Выходим из клана напрямую (не через leave_clan — та отказывает
+    # лидеру клана, а здесь нужно снять игрока с акка безусловно)
+    if user.get('clan_id'):
+        supabase.table("clan_members").delete().eq("clan_id", user['clan_id']).eq("user_id", telegram_id).execute()
+
+    summary = {
+        "cards": supabase.table("user_cards").delete().eq("user_id", telegram_id).execute().count or 0,
+        "packs": supabase.table("user_packs").delete().eq("user_id", telegram_id).execute().count or 0,
+        "squad": supabase.table("user_squads").delete().eq("user_id", telegram_id).execute().count or 0,
+        "tasks": supabase.table("user_tasks").delete().eq("user_id", telegram_id).execute().count or 0,
+        "achievements": supabase.table("user_achievements").delete().eq("user_id", telegram_id).execute().count or 0,
+    }
+    supabase.table("trade_offers").delete().eq("from_user_id", telegram_id).execute()
+    supabase.table("trade_offers").delete().eq("to_user_id", telegram_id).execute()
+    supabase.table("market_listings").delete().eq("seller_id", telegram_id).execute()
+    supabase.table("clan_join_requests").delete().eq("user_id", telegram_id).execute()
+
+    supabase.table("users").update({
+        "coins": 100,
+        "gems": 0,
+        "packs_opened": 0,
+        "rating": 1000,
+        "premium_until": None,
+        "last_daily_bonus": None,
+        "notification_settings": {"drop": True},
+        "battles_won": 0,
+        "battles_total": 0,
+        "clan_id": None,
+        "last_timed_drop": None,
+        "total_cards_obtained": 0,
+        "total_legendary_obtained": 0,
+        "total_mythic_obtained": 0,
+        "total_epic_obtained": 0,
+        "last_farm_at": None,
+        "premium_auto_renew": True,
+        "total_damage_dealt": 0,
+        "last_clan_withdraw": None,
+        "free_draws_remaining": 5,
+        "premium_bonus_claimed": 0,
+    }).eq("telegram_id", telegram_id).execute()
+
+    return summary
+
+
 # --- ВСЕ КЛАНЫ ---
 
 def get_all_clans_list(page=0, page_size=8):
