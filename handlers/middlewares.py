@@ -71,8 +71,18 @@ class SubscriptionGateMiddleware(BaseMiddleware):
             names = ", ".join(ch['title'] for ch in missing)
             bot.answer_callback_query(update.id, f"🔒 Сначала подпишись: {names}", show_alert=True)
         else:
-            bot.send_message(update.chat.id, build_subscription_text(missing),
-                             reply_markup=build_subscription_markup(), parse_mode="HTML")
+            try:
+                bot.send_message(update.chat.id, build_subscription_text(missing),
+                                 reply_markup=build_subscription_markup(), parse_mode="HTML")
+            except Exception as e:
+                # Кривая настройка канала (например URL без https://, как
+                # "@username" вместо "https://t.me/username") не должна
+                # ронять доступ к боту ВООБЩЕ ВСЕМ неподписанным игрокам —
+                # это реально случилось на проде (бот отвечал только
+                # админам). Пропускаем гейт в этот раз вместо того, чтобы
+                # молча блокировать апдейт.
+                print(f"SubscriptionGateMiddleware: не удалось показать гейт подписки: {e}")
+                return
 
         return CancelUpdate()
 

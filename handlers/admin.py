@@ -1034,7 +1034,24 @@ def _channel_step_title(message, data):
 
 
 def _channel_step_url(message, data):
-    data['url'] = message.text.strip()
+    # Раньше ссылка сохранялась как есть без проверки — админ мог случайно
+    # вписать "@username" вместо полной ссылки, и Telegram потом отклонял
+    # ВСЕ сообщения гейта подписки с ошибкой 400 "Wrong HTTP URL", из-за чего
+    # бот переставал отвечать вообще всем неподписанным игрокам разом.
+    raw = message.text.strip()
+    url = raw
+    if url.startswith('@'):
+        url = f"https://t.me/{url[1:]}"
+    elif url.startswith(('t.me/', 'telegram.me/')):
+        url = f"https://{url}"
+    if not url.startswith(('http://', 'https://')):
+        msg = bot.send_message(message.chat.id,
+                               "❌ Это не похоже на ссылку. Пришли полную пригласительную ссылку "
+                               "(https://t.me/... ) либо @username канала:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _channel_step_url, data)
+        return
+
+    data['url'] = url
     msg = bot.send_message(message.chat.id,
                            "🆔 Введи <b>ID чата</b> (например <code>-1001234567890</code>) или "
                            "<b>@username</b> канала/группы — по нему бот проверяет подписку.\n\n"
