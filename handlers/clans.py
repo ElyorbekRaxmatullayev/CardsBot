@@ -5,6 +5,7 @@ from database import create_clan, update_coins, update_task_progress
 from database import get_clan_info, get_clan_members_paginated, get_public_profile
 from database import get_user_data, leave_clan, join_clan, search_clans, is_user_banned
 from database import get_all_clans_list, request_join_clan, get_pending_clan_requests, accept_clan_request, reject_clan_request
+from database import invite_to_clan, accept_clan_invite, decline_clan_invite, find_user_by_username
 from database import withdraw_from_clan_treasury
 from loader import bot
 from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user, reply_match
@@ -113,6 +114,7 @@ def clan_main_menu(message, user_id=None, page=0):
                f"👑 Роль: {'Лидер' if is_leader else 'Участник'}")
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📜 Участники", callback_data=f"clan_mem_{user['clan_id']}_0"))
+        markup.add(types.InlineKeyboardButton("➕ Пригласить игрока", callback_data="clan_invite_start"))
         markup.add(types.InlineKeyboardButton("💸 Забрать из казны", callback_data="clan_withdraw"))
         if is_leader:
             markup.add(types.InlineKeyboardButton("📩 Заявки на вступление", callback_data=f"clan_reqs_{user['clan_id']}"))
@@ -276,6 +278,87 @@ def clan_join_req_cb(call):
     user_id = call.from_user.id
     success, msg = request_join_clan(user_id, clan_id)
     bot.answer_callback_query(call.id, msg, show_alert=True)
+
+
+# --- ПРИГЛАШЕНИЕ ИГРОКА В КЛАН (любой участник, не только лидер) ---
+
+@bot.callback_query_handler(func=lambda call: call.data == "clan_invite_start")
+def clan_invite_start(call):
+    bot.answer_callback_query(call.id)
+    user = get_user_data(call.from_user.id)
+    if not user or not user.get('clan_id'):
+        bot.answer_callback_query(call.id, "Вы не в клане", show_alert=True)
+        return
+    msg = bot.send_message(call.message.chat.id,
+                           "➕ <b>Приглашение в клан</b>\n\n"
+                           "Введи <b>Telegram ID</b> или <b>@username</b> игрока, "
+                           "которого хочешь пригласить:\n\n"
+                           "Отмена — /cancel", parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _clan_invite_step)
+
+
+def _clan_invite_step(message):
+    inviter_id = message.from_user.id
+    if message.text == '/cancel':
+        bot.send_message(message.chat.id, "Отменено.")
+        return
+
+    inviter = get_user_data(inviter_id)
+    if not inviter or not inviter.get('clan_id'):
+        bot.send_message(message.chat.id, "❌ Вы больше не состоите в клане.")
+        return
+    clan_id = inviter['clan_id']
+
+    raw = message.text.strip().lstrip('@')
+    target = None
+    if raw.isdigit():
+        target = get_user_data(int(raw))
+    if not target:
+        target = find_user_by_username(raw)
+    if not target:
+        bot.send_message(message.chat.id, "❌ Игрок не найден. Убедись, что он писал боту и ID/username верны.")
+        return
+
+    target_id = target['telegram_id']
+    success, result = invite_to_clan(clan_id, inviter_id, target_id)
+    if not success:
+        bot.send_message(message.chat.id, f"❌ {result}")
+        return
+
+    invite_id = result
+    clan = get_clan_info(clan_id)
+    inviter_name = inviter.get('first_name', 'Игрок')
+    bot.send_message(message.chat.id, f"✅ Приглашение отправлено {target.get('first_name', target_id)}!")
+
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        types.InlineKeyboardButton("✅ Принять", callback_data=f"clan_invite_accept:{invite_id}"),
+        types.InlineKeyboardButton("❌ Отклонить", callback_data=f"clan_invite_decline:{invite_id}"),
+    )
+    try:
+        bot.send_message(target_id,
+                         f"👥 <b>{inviter_name}</b> приглашает вас в клан «<b>{clan['name']}</b>»!",
+                         reply_markup=markup, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("clan_invite_accept:"))
+def clan_invite_accept_cb(call):
+    invite_id = int(call.data.split(":")[1])
+    success, msg = accept_clan_invite(invite_id, call.from_user.id)
+    bot.answer_callback_query(call.id, msg, show_alert=True)
+    if success:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("clan_invite_decline:"))
+def clan_invite_decline_cb(call):
+    invite_id = int(call.data.split(":")[1])
+    success, msg = decline_clan_invite(invite_id, call.from_user.id)
+    bot.answer_callback_query(call.id, msg, show_alert=True)
+    if success:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
 
 
 # --- УПРАВЛЕНИЕ ЗАЯВКАМИ (ДЛЯ ЛИДЕРА) ---

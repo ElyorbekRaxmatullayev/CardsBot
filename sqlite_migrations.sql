@@ -209,6 +209,20 @@ CREATE TABLE IF NOT EXISTS star_payments (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 19. CLAN_INVITES (приглашения В клан — лидер ИЛИ любой участник зовёт
+-- конкретного игрока, в отличие от clan_join_requests, где игрок сам
+-- просится и ждёт одобрения лидера). Без UNIQUE(clan_id, user_id) — в
+-- отличие от clan_join_requests, иначе после одного отклонённого
+-- приглашения того же игрока нельзя было бы позвать снова никогда.
+CREATE TABLE IF NOT EXISTS clan_invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    clan_id INTEGER NOT NULL REFERENCES clans(id) ON DELETE CASCADE,
+    invited_by INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ИНДЕКСЫ
 CREATE INDEX IF NOT EXISTS idx_user_cards_user ON user_cards(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_packs_user ON user_packs(user_id);

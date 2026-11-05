@@ -1980,3 +1980,60 @@ def reject_clan_request(request_id, leader_id):
     supabase.table("clan_join_requests").update({"status": "rejected"}).eq("id", request_id).execute()
     return True, "Заявка отклонена"
 
+
+# --- ПРИГЛАШЕНИЯ В КЛАН (любой участник зовёт конкретного игрока) ---
+# В отличие от clan_join_requests (игрок сам просится, ждёт лидера), здесь
+# ПРИГЛАШАЮЩИЙ инициирует, а решение — за ПРИГЛАШЁННЫМ (как в браке).
+
+def is_clan_member(user_id, clan_id):
+    res = supabase.table("clan_members").select("id").eq("clan_id", clan_id).eq("user_id", user_id).execute()
+    return bool(res.data)
+
+
+def invite_to_clan(clan_id, inviter_id, target_id):
+    """Приглашает конкретного игрока в клан — может и лидер, и любой
+    участник. Возвращает (success, invite_id_or_error_message)."""
+    if not is_clan_member(inviter_id, clan_id):
+        return False, "Вы не состоите в этом клане"
+    if target_id == inviter_id:
+        return False, "Нельзя пригласить самого себя"
+    target = get_user_data(target_id)
+    if not target:
+        return False, "Игрок не найден"
+    if target.get('clan_id'):
+        return False, "Этот игрок уже состоит в клане"
+    existing = supabase.table("clan_invites").select("id").eq("clan_id", clan_id).eq(
+        "user_id", target_id).eq("status", "pending").execute()
+    if existing.data:
+        return False, "Этому игроку уже отправлено приглашение в этот клан"
+    res = supabase.table("clan_invites").insert({
+        "clan_id": clan_id, "invited_by": inviter_id, "user_id": target_id, "status": "pending"
+    }).execute()
+    return True, (res.data[0]['id'] if res.data else None)
+
+
+def accept_clan_invite(invite_id, user_id):
+    """Приглашённый принимает приглашение в клан. Возвращает (success, message)."""
+    inv_res = supabase.table("clan_invites").select("*").eq("id", invite_id).eq("status", "pending").execute()
+    if not inv_res.data:
+        return False, "Приглашение не найдено или уже обработано"
+    inv = inv_res.data[0]
+    if inv['user_id'] != user_id:
+        return False, "Это не ваше приглашение"
+    success, msg = join_clan(user_id, inv['clan_id'])
+    if success:
+        supabase.table("clan_invites").update({"status": "accepted"}).eq("id", invite_id).execute()
+    return success, msg
+
+
+def decline_clan_invite(invite_id, user_id):
+    """Приглашённый отклоняет приглашение в клан."""
+    inv_res = supabase.table("clan_invites").select("*").eq("id", invite_id).eq("status", "pending").execute()
+    if not inv_res.data:
+        return False, "Приглашение не найдено или уже обработано"
+    inv = inv_res.data[0]
+    if inv['user_id'] != user_id:
+        return False, "Это не ваше приглашение"
+    supabase.table("clan_invites").update({"status": "declined"}).eq("id", invite_id).execute()
+    return True, "Приглашение отклонено"
+
