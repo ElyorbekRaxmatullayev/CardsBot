@@ -50,6 +50,7 @@ EXTRA_COLUMNS = {
     ],
     "marriages": [
         ("married_at", "TIMESTAMP"),
+        ("chat_id", "INTEGER"),
     ],
     "cards": [
         ("stars_price", "INTEGER"),

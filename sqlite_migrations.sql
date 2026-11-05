@@ -185,7 +185,8 @@ CREATE TABLE IF NOT EXISTS marriages (
     user2_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     status TEXT DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    married_at TIMESTAMP
+    married_at TIMESTAMP,
+    chat_id INTEGER
 );
 
 -- 17. CLAN_JOIN_REQUESTS

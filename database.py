@@ -1552,6 +1552,14 @@ def get_user_marriage(user_id):
     return res.data[0] if res.data else None
 
 
+def get_chat_marriages(chat_id):
+    """Активные даосские пары, подтверждённые именно в этом чате (этап C
+    ТЗ, команда "браки") — см. комментарий в accept_marriage про chat_id."""
+    res = supabase.table("marriages").select("*").eq("status", "active").eq(
+        "chat_id", chat_id).order("married_at", desc=True).execute()
+    return res.data or []
+
+
 def get_pending_marriage_request(user_id):
     """Возвращает входящую заявку на брак (status=pending, user2_id=user_id)"""
     res = supabase.table("marriages").select("*, users!marriages_user1_id_fkey(first_name, username)").eq(
@@ -1589,13 +1597,16 @@ def propose_marriage(from_user_id, to_user_id):
         return False, f"Ошибка: {e}"
 
 
-def accept_marriage(marriage_id, user_id):
-    """Принимает заявку на брак"""
+def accept_marriage(marriage_id, user_id, chat_id=None):
+    """Принимает заявку на брак. chat_id — чат, где это произошло (этап C
+    ТЗ: список "браки" в группе показывает пары, принявшие предложение
+    именно в этом чате — у бота нет доступа к полному списку участников
+    группы через Bot API, поэтому это ближайшее практичное приближение)."""
     res = supabase.table("marriages").select("*").eq("id", marriage_id).eq("user2_id", user_id).eq("status", "pending").execute()
     if not res.data:
         return False, "Заявка не найдена"
     now = datetime.now(timezone.utc).isoformat()
-    supabase.table("marriages").update({"status": "active", "married_at": now}).eq("id", marriage_id).execute()
+    supabase.table("marriages").update({"status": "active", "married_at": now, "chat_id": chat_id}).eq("id", marriage_id).execute()
     return True, "ok"
 
 
