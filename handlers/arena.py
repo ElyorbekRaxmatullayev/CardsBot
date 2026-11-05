@@ -185,7 +185,7 @@ def show_duel_menu(message, user_id):
     squad = get_user_squad(user_id)
     rating = user.get('rating', 1000)
 
-    txt = (f"🏟 <b>Арена: Дуэли</b>\n\n"
+    txt = (f"🏟 <b>Битва бессмертных: Дуэли</b>\n\n"
            f"🏆 Твой рейтинг: {rating}\n"
            f"🛡 Войнов в отряде: {len(squad)}/5\n\n"
            f"Готов сразиться за славу?")

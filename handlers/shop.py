@@ -17,8 +17,8 @@ _pack_buy_pending = {}  # user_id -> pack_type, ждём ввода количе
 
 def get_shop_menu_markup():
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📦 Паки", callback_data="shop_packs"))
-    markup.add(types.InlineKeyboardButton("⭐ Магазин Stars", callback_data="stars_shop_menu"))
+    markup.add(types.InlineKeyboardButton("📦 Сокровища небес", callback_data="shop_packs"))
+    markup.add(types.InlineKeyboardButton("⭐ Небесная лавка (Stars)", callback_data="stars_shop_menu"))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
     return markup
 
@@ -30,7 +30,7 @@ def shop_main(call):
     user = get_user_data(user_id)
     gems = user.get('gems', 0) or 0
 
-    txt = (f"🏪 <b>Магазин</b>\n"
+    txt = (f"🏪 <b>Небесная лавка</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"💰 Монеты: <b>{user['coins']}</b>\n"
            f"💎 Gems: <b>{gems}</b>\n\n"
@@ -48,7 +48,7 @@ def shop_packs(call):
     user = get_user_data(user_id)
     gems = user.get('gems', 0) or 0
 
-    txt = (f"📦 <b>Паки в магазине</b>\n"
+    txt = (f"📦 <b>Сокровища небес</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"💰 {user['coins']} монет | 💎 {gems} Gems\n\n")
 

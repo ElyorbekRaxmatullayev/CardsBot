@@ -31,24 +31,24 @@ def events_menu(call):
     markup = types.InlineKeyboardMarkup()
 
     if not events:
-        txt = (f"🎉 <b>События</b>\n"
+        txt = (f"🎉 <b>Испытания бессмертных</b>\n"
                f"➖➖➖➖➖➖➖➖\n\n"
-               f"😴 Сейчас нет активных событий.\n\n"
-               f"Следите за обновлениями! Во время событий:\n"
+               f"😴 Сейчас нет активных испытаний.\n\n"
+               f"Следите за обновлениями! Во время испытаний:\n"
                f"• Доступны лимитированные карты 🎴\n"
                f"• Специальные паки 📦\n"
                f"• Уникальные достижения 🏆\n"
                f"• Бонусные награды 🎁")
     else:
-        txt = (f"🎉 <b>Активные события</b>\n"
+        txt = (f"🎉 <b>Активные испытания</b>\n"
                f"➖➖➖➖➖➖➖➖\n\n")
         for event in events:
             time_left = format_event_time_left(event.get('end_at', ''))
-            txt += (f"⚡️ <b>{event.get('name', 'Событие')}</b>\n"
+            txt += (f"⚡️ <b>{event.get('name', 'Испытание')}</b>\n"
                     f"   📋 {event.get('description', '')}\n"
                     f"   ⏳ До конца: {time_left}\n\n")
             markup.add(types.InlineKeyboardButton(
-                f"🎴 {event.get('name', 'Событие')}",
+                f"🎴 {event.get('name', 'Испытание')}",
                 callback_data=f"event_detail:{event['id']}"
             ))
 
@@ -65,21 +65,21 @@ def event_detail(call):
     event = next((e for e in events if str(e.get('id')) == event_id), None)
 
     if not event:
-        bot.answer_callback_query(call.id, "Событие завершено", show_alert=True)
+        bot.answer_callback_query(call.id, "Испытание завершено", show_alert=True)
         return
 
     time_left = format_event_time_left(event.get('end_at', ''))
-    txt = (f"⚡️ <b>{event.get('name', 'Событие')}</b>\n"
+    txt = (f"⚡️ <b>{event.get('name', 'Испытание')}</b>\n"
            f"➖➖➖➖➖➖➖➖\n\n"
            f"📋 {event.get('description', 'Нет описания')}\n\n"
            f"⏳ До конца: <b>{time_left}</b>\n\n"
-           f"🎁 Во время события доступны:\n"
-           f"• Событийные паки 🎉\n"
+           f"🎁 Во время испытания доступны:\n"
+           f"• Паки испытаний 🎉\n"
            f"• Лимитированные карточки 🎴\n"
-           f"• Специальные задания 🎯")
+           f"• Особые шаги пути культивации 🎯")
 
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📦 Открыть событийный пак", callback_data="pack_view:event"))
-    markup.add(types.InlineKeyboardButton("🔙 К событиям", callback_data="menu_events"))
+    markup.add(types.InlineKeyboardButton("📦 Открыть пак испытания", callback_data="pack_view:event"))
+    markup.add(types.InlineKeyboardButton("🔙 К испытаниям", callback_data="menu_events"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       txt, reply_markup=markup, parse_mode="HTML")

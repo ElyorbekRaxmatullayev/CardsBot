@@ -56,7 +56,7 @@ def tasks_markup(period):
 def _build_tasks_text(user_id, period):
     tasks = DAILY_TASKS if period == "daily" else WEEKLY_TASKS
     progress = get_user_task_progress(user_id, period)
-    period_name = "📅 Ежедневные задания" if period == "daily" else "📆 Еженедельные задания"
+    period_name = "📅 Ежедневный путь культивации" if period == "daily" else "📆 Еженедельный путь культивации"
 
     txt = f"🎯 <b>{period_name}</b>\n➖➖➖➖➖➖➖➖\n\n"
     for task in tasks:
@@ -108,7 +108,7 @@ def claim_tasks(call):
                 claimed_names.append(task['name'])
 
     if not claimed_names:
-        bot.answer_callback_query(call.id, "Нет выполненных заданий для получения наград!", show_alert=True)
+        bot.answer_callback_query(call.id, "Нет пройденных шагов пути для получения наград!", show_alert=True)
         return
 
     if total_coins > 0:

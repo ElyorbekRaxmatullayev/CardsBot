@@ -63,11 +63,11 @@ def admin_start(message, user_id=None):
         types.InlineKeyboardButton("👤 Игроки", callback_data="adm_users"),
     )
     markup.row(
-        types.InlineKeyboardButton("🎉 События", callback_data="adm_events"),
+        types.InlineKeyboardButton("🎉 Испытания", callback_data="adm_events"),
         types.InlineKeyboardButton("📊 Статистика", callback_data="adm_stats"),
     )
     markup.row(
-        types.InlineKeyboardButton("💍 Браки", callback_data="adm_marriages:0"),
+        types.InlineKeyboardButton("💍 Даосские пары", callback_data="adm_marriages:0"),
         types.InlineKeyboardButton("📣 Рассылка", callback_data="adm_broadcast"),
     )
     markup.row(
@@ -137,11 +137,11 @@ def _render_marriages_list(chat_id, message_id, admin_id, page):
     max_page = max(0, (total - 1) // MARRIAGES_PAGE_SIZE)
 
     header = f"🔍 по запросу «{query}» " if query else ""
-    txt = f"💍 <b>Зарегистрированные браки</b> {header}(всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
+    txt = f"💍 <b>Даосские пары</b> {header}(всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
     markup = types.InlineKeyboardMarkup(row_width=1)
 
     if not marriages:
-        txt += "Ничего не найдено." if query else "Пока нет ни одного брака."
+        txt += "Ничего не найдено." if query else "Пока нет ни одной даосской пары."
     else:
         for m in marriages:
             u1_disp = _marriage_user_disp(m.get('u1'))
@@ -219,7 +219,7 @@ def adm_marriage_confirm(call):
         types.InlineKeyboardButton("❌ Отмена", callback_data=f"adm_marriages:{page}"),
     )
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                      "⚠️ Расторгнуть этот брак принудительно?", reply_markup=markup)
+                      "⚠️ Расторгнуть этот союз принудительно?", reply_markup=markup)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_marriage_do:"))
@@ -228,7 +228,7 @@ def adm_marriage_do(call):
         return
     _, marriage_id, page = call.data.split(":")
     ok = admin_divorce_marriage(int(marriage_id))
-    bot.answer_callback_query(call.id, "✅ Брак расторгнут" if ok else "❌ Брак уже не активен", show_alert=True)
+    bot.answer_callback_query(call.id, "✅ Союз расторгнут" if ok else "❌ Союз уже не активен", show_alert=True)
     _render_marriages_list(call.message.chat.id, call.message.message_id, call.from_user.id, int(page))
 
 
@@ -726,11 +726,11 @@ def adm_events_menu(call):
     events = get_events_admin(10)
     now = datetime.now(timezone.utc)
 
-    txt = "🎉 <b>События</b>\n➖➖➖➖➖➖➖➖\n\n"
+    txt = "🎉 <b>Испытания бессмертных</b>\n➖➖➖➖➖➖➖➖\n\n"
     markup = types.InlineKeyboardMarkup(row_width=1)
 
     if not events:
-        txt += "Событий пока нет."
+        txt += "Испытаний пока нет."
     else:
         for e in events:
             try:
@@ -744,7 +744,7 @@ def adm_events_menu(call):
                 markup.add(types.InlineKeyboardButton(f"🛑 Завершить «{e['name']}»",
                                                        callback_data=f"adm_event_end:{e['id']}"))
 
-    markup.add(types.InlineKeyboardButton("➕ Создать событие", callback_data="adm_event_create"))
+    markup.add(types.InlineKeyboardButton("➕ Создать испытание", callback_data="adm_event_create"))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="adm_back"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
                       reply_markup=markup, parse_mode="HTML")
@@ -755,19 +755,19 @@ def adm_event_create_start(call):
     if not is_admin(call.from_user.id):
         return
     bot.answer_callback_query(call.id)
-    msg = bot.send_message(call.message.chat.id, "🎉 Введи <b>название</b> события:", parse_mode="HTML")
+    msg = bot.send_message(call.message.chat.id, "🎉 Введи <b>название</b> испытания:", parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, call.from_user.id, _event_step_name, {})
 
 
 def _event_step_name(message, data):
     data['name'] = message.text.strip()
-    msg = bot.send_message(message.chat.id, "Введи <b>описание</b> события:", parse_mode="HTML")
+    msg = bot.send_message(message.chat.id, "Введи <b>описание</b> испытания:", parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_step_desc, data)
 
 
 def _event_step_desc(message, data):
     data['description'] = message.text.strip()
-    msg = bot.send_message(message.chat.id, "На сколько <b>дней</b> запустить событие? (число)", parse_mode="HTML")
+    msg = bot.send_message(message.chat.id, "На сколько <b>дней</b> запустить испытание? (число)", parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_step_days, data)
 
 
@@ -781,7 +781,7 @@ def _event_step_days(message, data):
         register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_step_days, data)
         return
     create_event(data['name'], data['description'], days)
-    bot.send_message(message.chat.id, f"✅ Событие «<b>{data['name']}</b>» запущено на {days} дн.!",
+    bot.send_message(message.chat.id, f"✅ Испытание «<b>{data['name']}</b>» запущено на {days} дн.!",
                      reply_markup=_adm_back_markup(), parse_mode="HTML")
 
 
@@ -791,7 +791,7 @@ def adm_event_end_cb(call):
         return
     event_id = int(call.data.split(":")[1])
     end_event(event_id)
-    bot.answer_callback_query(call.id, "🛑 Событие завершено", show_alert=True)
+    bot.answer_callback_query(call.id, "🛑 Испытание завершено", show_alert=True)
     adm_events_menu(call)
 
 

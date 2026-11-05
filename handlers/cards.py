@@ -63,15 +63,20 @@ def handler_get_card(message):
     on_card_obtained(message.from_user.id, card, is_dup)
     update_task_progress(message.from_user.id, "get_card", "daily")
 
-    emoji = RARITY_CONFIG.get(card['rarity'], {}).get('emoji', '')
+    rarity_cfg = RARITY_CONFIG.get(card['rarity'], {})
+    emoji = rarity_cfg.get('emoji', '')
+    rarity_ru = rarity_cfg.get('ru', card['rarity'])
     # Формируем упоминание игрока
     user_mention = f"@{message.from_user.username}" if message.from_user.username else f"<b>{message.from_user.first_name}</b>"
-    caption = (f"👤 {user_mention} получил карту:\n"
-               f"{emoji} <b>{card['name']}</b>\n")
+
+    def _fmt(n):
+        return f"{n:,}".replace(",", " ")
+
+    caption = f"🔮 {user_mention} призвал героя!\n\n"
+    caption += f"{emoji} {rarity_ru} · <b>{card['name']}</b>\n"
     if card.get('dunhua'):
-        caption += f"Мир: {card['dunhua']}\n"
-    caption += (f"⭐️ {card['rarity']}\n"
-               f"⚔️ {card['attack']} | ❤️ {card['hp']}")
+        caption += f"📖 Дунхуа: «{card['dunhua']}»\n"
+    caption += f"\n⚔️ Сила: {_fmt(card['attack'])}\n❤️ Здоровье: {_fmt(card['hp'])}"
     if is_dup: caption += f"\n♻️ Дубликат (x{count})"
     if used_free_draw:
         remaining = (user.get('free_draws_remaining') or 0) - 1

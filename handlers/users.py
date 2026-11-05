@@ -21,47 +21,62 @@ from utils import safe_send_message, safe_edit_message, reply_match
 def get_main_reply_markup(selective=False):
     # selective=True — клавиатура показывается только тому, кто её вызвал
     # (важно в группах: иначе она "переключает" интерфейс всем участникам чата)
+    # Главный экран упрощён до 4 кнопок (этап A ТЗ) — всё остальное (кланы,
+    # фарм, брак, настройки, premium, о нас) переехало в инлайн-меню "📜 Меню".
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, selective=selective)
     markup.row(types.KeyboardButton("🎴 Получить карту"), types.KeyboardButton("🗂 Мои карты"))
-    markup.row(types.KeyboardButton("👥 Кланы"), types.KeyboardButton("🎮 Играть"), types.KeyboardButton("ℹ️ О нас"))
-    markup.row(types.KeyboardButton("⛏️ Фарм"), types.KeyboardButton("❤️ Брак"), types.KeyboardButton("⚙️ Настройки"))
-    markup.row(types.KeyboardButton("👑 Premium"))
+    markup.row(types.KeyboardButton("👤 Профиль"), types.KeyboardButton("📜 Меню"))
     return markup
 
 
 def get_game_inline_markup():
-    """Главное игровое меню — разбито на логические категории"""
+    """Главное игровое меню — разбито на логические категории. "Профиль" и
+    "Коллекция" (= Мои карты) сюда не входят — это теперь отдельные кнопки
+    на главном экране (этап A ТЗ), дублировать их здесь незачем."""
     markup = types.InlineKeyboardMarkup()
-    # Профиль и коллекция
-    markup.row(
-        types.InlineKeyboardButton("👤 Профиль", callback_data="menu_profile"),
-        types.InlineKeyboardButton("🎒 Коллекция", callback_data="menu_collection"),
-    )
     # Бой
     markup.row(
-        types.InlineKeyboardButton("🏟 Арена", callback_data="menu_arena"),
+        types.InlineKeyboardButton("🏟 Битва бессмертных", callback_data="menu_arena"),
         types.InlineKeyboardButton("🏆 Рейтинг", callback_data="menu_rating"),
     )
     # Паки и магазин
     markup.row(
-        types.InlineKeyboardButton("📦 Паки", callback_data="menu_packs"),
-        types.InlineKeyboardButton("🛒 Магазин", callback_data="menu_shop"),
+        types.InlineKeyboardButton("📦 Сокровища небес", callback_data="menu_packs"),
+        types.InlineKeyboardButton("🛒 Небесная лавка", callback_data="menu_shop"),
     )
     # Социальное
     markup.row(
-        types.InlineKeyboardButton("🤝 Обмен", callback_data="menu_trade"),
-        types.InlineKeyboardButton("🏪 Площадка", callback_data="menu_market"),
+        types.InlineKeyboardButton("🤝 Обмен духовными сокровищами", callback_data="menu_trade"),
+    )
+    markup.row(
+        types.InlineKeyboardButton("🏪 Мир культивации", callback_data="menu_market"),
     )
     # Прогресс
     markup.row(
-        types.InlineKeyboardButton("🎯 Задания", callback_data="menu_tasks"),
+        types.InlineKeyboardButton("🎯 Путь культивации", callback_data="menu_tasks"),
         types.InlineKeyboardButton("🏅 Достижения", callback_data="menu_achievements"),
     )
     # Прочее
     markup.row(
-        types.InlineKeyboardButton("🎉 События", callback_data="menu_events"),
+        types.InlineKeyboardButton("🎉 Испытания бессмертных", callback_data="menu_events"),
         types.InlineKeyboardButton("🔗 Рефералка", callback_data="menu_ref"),
-        types.InlineKeyboardButton("🎁 Бонус", callback_data="menu_bonus"),
+    )
+    markup.row(
+        types.InlineKeyboardButton("🎁 Дары небес", callback_data="menu_bonus"),
+    )
+    # Соцфункции и настройки — раньше отдельные кнопки на главном экране,
+    # теперь здесь (этап A ТЗ: главный экран упрощён до 4 кнопок)
+    markup.row(
+        types.InlineKeyboardButton("👥 Кланы", callback_data="menu_clans"),
+        types.InlineKeyboardButton("❤️ Даосская пара", callback_data="menu_marriage"),
+    )
+    markup.row(
+        types.InlineKeyboardButton("⛏️ Фарм", callback_data="menu_farm"),
+        types.InlineKeyboardButton("⚙️ Настройки", callback_data="menu_settings"),
+    )
+    markup.row(
+        types.InlineKeyboardButton("👑 Premium", callback_data="menu_premium"),
+        types.InlineKeyboardButton("ℹ️ О нас", callback_data="menu_about"),
     )
     return markup
 
@@ -73,7 +88,7 @@ def get_rating_markup():
         types.InlineKeyboardButton("💰 По коинам", callback_data="top_coins"),
         types.InlineKeyboardButton("🃏 По кол-ву карт", callback_data="top_count"),
         types.InlineKeyboardButton("💎 По гемам", callback_data="top_gems"),
-        types.InlineKeyboardButton("⚔️ По урону (Арена)", callback_data="top_damage"),
+        types.InlineKeyboardButton("⚔️ По урону (Битва бессмертных)", callback_data="top_damage"),
         types.InlineKeyboardButton("🧘 Культиваторы", callback_data="top_cult"),
         types.InlineKeyboardButton("🏰 Казна клана", callback_data="top_treasury"),
         types.InlineKeyboardButton("🏰 Победы в войнах", callback_data="top_warwins"),
@@ -136,7 +151,7 @@ def send_welcome(message):
         print(f"Error sending message: {e}")
 
 
-@bot.message_handler(func=reply_match("🎮 Играть", "Играть"))
+@bot.message_handler(func=reply_match("📜 Меню", "Меню", "🎮 Играть", "Играть"))
 def game_menu_handler(message):
     if is_user_banned(message.from_user.id):
         bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")
@@ -145,18 +160,32 @@ def game_menu_handler(message):
     safe_send_message(bot, message.chat.id, txt, reply_markup=get_game_inline_markup(), parse_mode="HTML", owner_id=message.from_user.id)
 
 
+@bot.message_handler(func=reply_match("👤 Профиль", "Профиль"))
+def profile_handler(message, user_id=None):
+    user_id = user_id or message.from_user.id
+    if is_user_banned(user_id):
+        bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")
+        return
+    txt = build_profile_text(user_id)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
+
+
 @bot.message_handler(func=reply_match("ℹ️ О нас", "О нас"))
-def about_handler(message):
+def about_handler(message, user_id=None):
+    user_id = user_id or message.from_user.id
     txt = ("‼️ <b>Информация о нас.</b>\n"
            "➖➖➖➖➖➖\n"
            "<a href='https://telegra.ph/Politika-konfidencialnosti-Telegram-bota-12-24'>Политика конфиденциальности</a>\n"
            "<a href='https://telegra.ph/Polzovatelskoe-soglashenie'>Пользовательское соглашение</a>")
-    safe_send_message(bot, message.chat.id, txt, reply_markup=get_back_markup(), parse_mode="HTML", owner_id=message.from_user.id)
+    safe_send_message(bot, message.chat.id, txt, reply_markup=get_back_markup(), parse_mode="HTML", owner_id=user_id)
 
 
 @bot.message_handler(func=reply_match("⚙️ Настройки", "Настройки"))
-def settings_handler(message):
-    user = get_user_data(message.from_user.id)
+def settings_handler(message, user_id=None):
+    user_id = user_id or message.from_user.id
+    user = get_user_data(user_id)
     notif = user.get('notification_settings', {}).get('drop', True) if user.get('notification_settings') else True
     status = "🔔 Включены" if notif else "🔕 Выключены"
 
@@ -170,7 +199,7 @@ def settings_handler(message):
 
     txt = (f"⚙️ <b>Настройки</b>\n\n"
            f"Уведомления о картах: {status}")
-    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=message.from_user.id)
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
 # ─────────────────────────────────────────────
@@ -198,10 +227,9 @@ def toggle_notification(call):
                       reply_markup=markup, parse_mode="HTML")
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "menu_profile")
-def callback_profile(call):
-    bot.answer_callback_query(call.id)
-    user_id = call.from_user.id
+def build_profile_text(user_id):
+    """Общий текст профиля культиватора — используется и реплай-кнопкой
+    "👤 Профиль", и инлайн-коллбэком menu_profile."""
     user = get_user_data(user_id)
 
     clan_name = get_clan_name(user.get('clan_id'))
@@ -233,11 +261,11 @@ def callback_profile(call):
     else:
         cult_progress_txt = f"🧘 <b>Опыт:</b> {cult['xp']} (максимальная стадия)\n"
 
-    txt = (f"👤 <b>Профиль культиватора</b>\n"
+    return (f"👤 <b>Профиль культиватора</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"📛 <b>Ник:</b> {user['first_name']}\n"
            f"🏰 <b>Клан:</b> {clan_name}\n"
-           f"❤️ <b>Брак:</b> {marriage_txt}\n"
+           f"❤️ <b>Даосская пара:</b> {marriage_txt}\n"
            f"🏆 <b>Место в рейтинге:</b> #{rank}\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"🔺 <b>Уровень:</b> {cult['level']}\n"
@@ -251,6 +279,12 @@ def callback_profile(call):
            f"⚔️ <b>Побед:</b> {wins} / {total}  ({winrate})\n"
            f"📦 <b>Открыто паков:</b> {packs_opened}\n"
            f"🌟 <b>Premium:</b> {prem_text}")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_profile")
+def callback_profile(call):
+    bot.answer_callback_query(call.id)
+    txt = build_profile_text(call.from_user.id)
 
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
@@ -267,6 +301,56 @@ def collection_redirect(call):
     bot.delete_message(call.message.chat.id, call.message.message_id)
     call.message.text = "🗂 Мои карты"
     inventory_menu(call.message, user_id=call.from_user.id)
+
+
+# --- РАЗДЕЛЫ, ПЕРЕЕХАВШИЕ С ГЛАВНОГО ЭКРАНА В ИНЛАЙН-МЕНЮ (этап A ТЗ) ---
+# Тот же паттерн, что у collection_redirect выше: удаляем сообщение меню и
+# вызываем функцию соответствующей реплай-кнопки напрямую, с user_id — она
+# сама шлёт новое сообщение.
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_clans")
+def clans_redirect(call):
+    bot.answer_callback_query(call.id)
+    from handlers.clans import clan_main_menu
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    clan_main_menu(call.message, user_id=call.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_marriage")
+def marriage_redirect(call):
+    bot.answer_callback_query(call.id)
+    from handlers.marriage import marriage_main_menu
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    marriage_main_menu(call.message, user_id=call.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_farm")
+def farm_redirect(call):
+    bot.answer_callback_query(call.id)
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    farm_handler(call.message, user_id=call.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_settings")
+def settings_redirect(call):
+    bot.answer_callback_query(call.id)
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    settings_handler(call.message, user_id=call.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_premium")
+def premium_redirect(call):
+    bot.answer_callback_query(call.id)
+    from handlers.shop import premium_menu_reply
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    premium_menu_reply(call.message, user_id=call.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_about")
+def about_redirect(call):
+    bot.answer_callback_query(call.id)
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    about_handler(call.message, user_id=call.from_user.id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_game_menu")
@@ -318,7 +402,7 @@ def show_top(call):
     elif category == "damage":
         data = get_top_by_damage()
         metric, field = "⚔️", "value"
-        txt = "⚔️ <b>Топ по урону (Арена)</b>\n\n"
+        txt = "⚔️ <b>Топ по урону (Битва бессмертных)</b>\n\n"
     elif category == "treasury":
         data = get_top_clans_by_treasury()
         metric, field = "💰", "coins"
@@ -368,7 +452,7 @@ def get_daily_bonus(call):
     user_id = call.from_user.id
 
     if not check_daily_bonus(user_id):
-        bot.answer_callback_query(call.id, "⏳ Бонус уже получен! Приходи завтра.", show_alert=True)
+        bot.answer_callback_query(call.id, "⏳ Дар небес уже получен! Приходи завтра.", show_alert=True)
         return
 
     bot.answer_callback_query(call.id)
@@ -391,10 +475,10 @@ def get_daily_bonus(call):
     # Показываем ник получателя бонуса в чате
     user_tg = call.from_user
     user_mention = f"@{user_tg.username}" if user_tg.username else f"<b>{user_tg.first_name}</b>"
-    txt = (f"🎁 {user_mention} получил ежедневный бонус!\n\n"
+    txt = (f"🎁 {user_mention} получил дар небес!\n\n"
            f"Вы получили 3 карты:\n"
            f"1. {received[0]}\n2. {received[1]}\n3. {received[2]}\n\n"
-           f"Возвращайся завтра за новым бонусом!")
+           f"Возвращайся завтра за новым даром!")
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
                       reply_markup=get_back_markup(), parse_mode="HTML")
 
@@ -402,12 +486,17 @@ def get_daily_bonus(call):
 # --- ФАРМ МОНЕТ ---
 
 @bot.message_handler(func=reply_match("⛏️ Фарм", "Фарм"))
-def farm_handler(message):
-    if is_user_banned(message.from_user.id):
+def farm_handler(message, user_id=None):
+    # is_override=True — вызвано из инлайн-меню (message — старое сообщение
+    # БОТА, а не свежее сообщение игрока), значит отвечать на него не нужно
+    is_override = user_id is not None
+    user_id = user_id or message.from_user.id
+    reply_id = message.message_id if (not is_override and message.chat.type != 'private') else None
+
+    if is_user_banned(user_id):
         bot.send_message(message.chat.id, "⛔️ Вы заблокированы в этом боте.")
         return
 
-    user_id = message.from_user.id
     available, seconds_left = check_farm_available(user_id)
 
     if not available:
@@ -417,7 +506,7 @@ def farm_handler(message):
             message.chat.id,
             f"⏳ Фарм ещё не готов!\n"
             f"Ожидай: {hours_left}ч {minutes_left}мин",
-            reply_to_message_id=message.message_id if message.chat.type != 'private' else None
+            reply_to_message_id=reply_id
         )
         return
 
@@ -426,18 +515,20 @@ def farm_handler(message):
     # быстрых нажатий, и фарм уже выполнил другой из параллельных запросов
     amount = do_farm_coins(user_id)
     if not amount:
-        bot.send_message(message.chat.id, "⏳ Фарм ещё не готов!",
-                         reply_to_message_id=message.message_id if message.chat.type != 'private' else None)
+        bot.send_message(message.chat.id, "⏳ Фарм ещё не готов!", reply_to_message_id=reply_id)
         return
 
-    user_mention = f"@{message.from_user.username}" if message.from_user.username else f"<b>{message.from_user.first_name}</b>"
+    user_data = get_user_data(user_id)
+    uname = user_data.get('username') if user_data else None
+    fname = user_data.get('first_name') if user_data else 'Игрок'
+    user_mention = f"@{uname}" if uname else f"<b>{fname}</b>"
     bot.send_message(
         message.chat.id,
         f"⛏️ {user_mention} собрал монеты на ферме!\n"
         f"💰 +<b>{amount}</b> монет\n\n"
         f"⏳ Следующий фарм через 4 часа.",
         parse_mode="HTML",
-        reply_to_message_id=message.message_id if message.chat.type != 'private' else None
+        reply_to_message_id=reply_id
     )
 
 

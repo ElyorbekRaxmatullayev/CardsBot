@@ -35,7 +35,7 @@ def get_market_menu_markup():
 def market_menu(call):
     bot.answer_callback_query(call.id)
     total = count_active_market_listings()
-    txt = (f"🏪 <b>Торговая площадка</b>\n"
+    txt = (f"🏪 <b>Мир культивации</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"Активных предложений: <b>{total}</b>\n\n"
            f"Фильтруй по редкости или смотри все:")
@@ -58,9 +58,9 @@ def market_browse(call):
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     if not page_items:
-        txt = f"🏪 <b>Торговая площадка</b>\n\nНет предложений ({filter_name})."
+        txt = f"🏪 <b>Мир культивации</b>\n\nНет предложений ({filter_name})."
     else:
-        txt = f"🏪 <b>Торговая площадка</b> [{filter_name}] (всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
+        txt = f"🏪 <b>Мир культивации</b> [{filter_name}] (всего: {total})\n➖➖➖➖➖➖➖➖\n\n"
         for listing in page_items:
             card = listing.get('cards') or {}
             seller_name = (listing.get('users') or {}).get('first_name', '?')

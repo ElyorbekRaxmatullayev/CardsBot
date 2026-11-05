@@ -34,7 +34,7 @@ def get_stars_shop_markup():
 @bot.callback_query_handler(func=lambda call: call.data == "stars_shop_menu")
 def stars_shop_menu(call):
     bot.answer_callback_query(call.id)
-    txt = ("⭐ <b>Магазин за Telegram Stars</b>\n"
+    txt = ("⭐ <b>Небесная лавка за Telegram Stars</b>\n"
            "➖➖➖➖➖➖➖➖\n"
            "Оплата прямо внутри Telegram — без сторонних сайтов и карт.\n\n"
            "Выберите категорию:")

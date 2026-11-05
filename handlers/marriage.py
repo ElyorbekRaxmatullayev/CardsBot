@@ -7,7 +7,7 @@ from loader import bot
 from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user, reply_match
 
 
-@bot.message_handler(func=reply_match("❤️ Брак", "Брак"))
+@bot.message_handler(func=reply_match("❤️ Даосская пара", "Даосская пара", "❤️ Брак", "Брак"))
 def marriage_main_menu(message, user_id=None):
     user_id = user_id or message.from_user.id
 
@@ -23,9 +23,9 @@ def marriage_main_menu(message, user_id=None):
         partner_username = partner_data.get('username')
         display_name = f"@{partner_username}" if partner_username else partner_name
 
-        txt = (f"💍 <b>Ваш брак</b>\n\n"
+        txt = (f"💍 <b>Ваша даосская пара</b>\n\n"
                f"❤️ Ваш партнёр: {display_name}\n\n"
-               f"Вы состоите в счастливом браке! 🎉")
+               f"Вы — счастливая даосская пара! 🎉")
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("💔 Развестись", callback_data="marriage_divorce_confirm"))
         safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
@@ -39,7 +39,7 @@ def marriage_main_menu(message, user_id=None):
         display_name = f"@{sender_username}" if sender_username else sender_name
 
         txt = (f"💌 <b>Входящее предложение</b>\n\n"
-               f"{display_name} предлагает вам вступить в брак! 💍")
+               f"{display_name} предлагает вам стать даосской парой! 💍")
         markup = types.InlineKeyboardMarkup()
         markup.row(
             types.InlineKeyboardButton("✅ Принять", callback_data=f"marriage_accept:{pending_in['id']}"),
@@ -50,14 +50,14 @@ def marriage_main_menu(message, user_id=None):
 
     pending_out = get_sent_marriage_request(user_id)
     if pending_out:
-        txt = "⏳ Вы уже отправили предложение о браке. Ожидайте ответа партнёра!"
+        txt = "⏳ Вы уже отправили предложение о даосской паре. Ожидайте ответа партнёра!"
         bot.send_message(message.chat.id, txt)
         return
 
-    txt = (f"💍 <b>Бракосочетание</b>\n\n"
-           f"Вы одиноки. Вы можете предложить брак другому игроку, и его ник появится в вашем профиле!")
+    txt = (f"💍 <b>Даосская пара</b>\n\n"
+           f"Вы одиноки. Вы можете предложить союз другому игроку, и его ник появится в вашем профиле!")
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("💍 Предложить брак", callback_data="marriage_propose"))
+    markup.add(types.InlineKeyboardButton("💍 Предложить союз", callback_data="marriage_propose"))
     safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
@@ -90,7 +90,7 @@ def process_marriage_proposal(message):
         bot.send_message(message.chat.id, f"✅ Предложение отправлено {target_username}! Ждите ответа.")
         # Оповещаем партнёра
         try:
-            bot.send_message(target_id, f"💌 <b>У вас новое предложение о браке!</b>\nЗайдите в раздел ❤️ Брак.", parse_mode="HTML")
+            bot.send_message(target_id, f"💌 <b>У вас новое предложение о даосской паре!</b>\nЗайдите в раздел ❤️ Даосская пара.", parse_mode="HTML")
         except:
             pass
     else:

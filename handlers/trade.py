@@ -31,7 +31,7 @@ def trade_menu(call):
     incoming = get_incoming_trades(user_id)
 
     badge = f" ({len(incoming)})" if incoming else ""
-    txt = (f"🤝 <b>Обмен картами</b>\n"
+    txt = (f"🤝 <b>Обмен духовными сокровищами</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"Входящих предложений: <b>{len(incoming)}</b>\n\n"
            f"Выберите действие:")
@@ -424,7 +424,7 @@ def _finish_trade_queue(chat_id, user_id):
             bot.send_message(target_id,
                              f"🤝 <b>Новые предложения обмена!</b>\n\n"
                              f"Игрок предложил вам {len(ok_lines)} карт(ы).\n"
-                             f"Откройте раздел 🤝 Обмен → Входящие предложения.",
+                             f"Откройте раздел 🤝 Обмен духовными сокровищами → Входящие предложения.",
                              parse_mode="HTML")
         except Exception:
             pass

@@ -64,7 +64,7 @@ def packs_menu(call):
     packs = get_user_packs(user_id)
     total = sum(p['count'] for p in packs)
 
-    txt = (f"🎴 <b>Мои паки</b>\n"
+    txt = (f"🎴 <b>Сокровища небес</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"У вас всего паков: <b>{total}</b>\n\n"
            f"Выберите пак, чтобы открыть:")

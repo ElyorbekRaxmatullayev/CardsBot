@@ -81,7 +81,7 @@ PACK_CONFIG = {
         "description": "5 карт — гарант Mythic+"
     },
     "event": {
-        "name": "🎉 Событийный пак",
+        "name": "🎉 Пак испытаний",
         "price_coins": 300,
         "price_gems": 0,
         "cards_count": 3,
