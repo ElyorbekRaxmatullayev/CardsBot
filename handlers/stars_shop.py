@@ -4,9 +4,11 @@ from telebot import types
 from telebot.types import LabeledPrice
 
 from config import (STARS_GEMS_PACKAGES, STARS_COINS_PACKAGES, STARS_CARD_PRICES,
-                    STARS_VIP_PACKAGES, RARITY_CONFIG, PACK_CONFIG, PREMIUM_BONUS_PACKS)
+                    STARS_VIP_PACKAGES, RARITY_CONFIG, PACK_CONFIG, PREMIUM_BONUS_PACKS,
+                    PREMIUM_FIRST_PURCHASE_PACKS)
 from database import (get_all_cards, add_card_to_user, on_card_obtained, get_card_by_id,
                       update_gems, update_coins, grant_premium, grant_premium_bonus_packs,
+                      grant_first_purchase_premium_bonus,
                       record_star_payment, get_limited_cards_with_price)
 from loader import bot, supabase
 from utils import safe_edit_message
@@ -309,6 +311,13 @@ def handle_successful_payment(message):
         grant_premium_bonus_packs(user_id)
         gift_txt = "\n".join(f"📦 {PACK_CONFIG[p]['name']} x{c}" for p, c in PREMIUM_BONUS_PACKS.items())
         bonus_txt = f"\n🎁 Бонус-паки:\n{gift_txt}"
+
+        # Разовый бонус именно за ПЕРВУЮ покупку Premium (этап C ТЗ) — поверх
+        # обычных бонус-паков выше
+        if grant_first_purchase_premium_bonus(user_id):
+            first_gift_txt = "\n".join(f"📦 {PACK_CONFIG[p]['name']} x{c}" for p, c in PREMIUM_FIRST_PURCHASE_PACKS.items())
+            bonus_txt += f"\n\n🌟 Бонус за первую покупку Premium:\n{first_gift_txt}"
+
         bot.send_message(message.chat.id,
                          f"✅ Спасибо за покупку! Premium активирован на {days} дней.{bonus_txt}",
                          parse_mode="HTML")

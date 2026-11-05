@@ -1,6 +1,6 @@
 from telebot import types
 
-from config import PACK_CONFIG, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, STARS_VIP_PACKAGES
+from config import PACK_CONFIG, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, STARS_VIP_PACKAGES, FARM_PREMIUM_BONUS_PERCENT
 from database import get_user_data, update_coins, update_gems, add_pack_to_user, is_premium, update_task_progress
 from loader import bot, supabase
 from utils import safe_edit_message, safe_send_message, reply_match, register_next_step_handler_for_user
@@ -168,14 +168,16 @@ def premium_menu_reply(message, user_id=None):
 
     cooldown_min = int(DROP_COOLDOWN_PREMIUM * 60)
     h, m = divmod(cooldown_min, 60)
-    cooldown_str = f"{h}ч {m}мин" if h > 0 else f"{m}мин"
+    cooldown_str = (f"{h}ч" + (f" {m}мин" if m else "")) if h > 0 else f"{m}мин"
 
-    txt = (f"👑 <b>Premium-подписка</b>\n"
+    txt = (f"👑 <b>Premium-подписка «Бессмертный»</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"Статус: {status_txt}\n\n"
            f"Что даёт Premium:\n"
            f"• Кулдаун карты: {cooldown_str} (вместо {DROP_COOLDOWN}ч)\n"
-           f"• 🎁 Бонус-паки при КАЖДОЙ покупке\n\n"
+           f"• 🔥 +{FARM_PREMIUM_BONUS_PERCENT}% монет с медитации (фарма)\n"
+           f"• 🎁 Бонус-паки при КАЖДОЙ покупке\n"
+           f"• 🌟 3 легендарных пака за ПЕРВУЮ покупку\n\n"
            f"Оплата — Telegram Stars ⭐:")
 
     markup = types.InlineKeyboardMarkup()

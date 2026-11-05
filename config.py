@@ -256,9 +256,10 @@ PREMIUM_COST_GEMS = 100      # больше не показывается как
 PREMIUM_DAYS = 30
 CLAN_CREATE_COST = 1000
 DROP_COOLDOWN = 3
-DROP_COOLDOWN_PREMIUM = 1.5  # 1 час 30 минут
+DROP_COOLDOWN_PREMIUM = 1    # этап C ТЗ: призыв раз в 1 час для VIP
 FARM_COOLDOWN_HOURS = 4      # Кулдаун фарма монет
 FARM_MAX_COINS = 100         # Максимум монет за фарм
+FARM_PREMIUM_BONUS_PERCENT = 50  # этап C ТЗ: +50% монет за медитацию для VIP
 MARKET_FEE_PERCENT = 5       # комиссия торговой площадки %
 MAX_PENDING_TRADE_OFFERS = 100  # лимит одновременных исходящих заявок на обмен у одного игрока
 
@@ -293,11 +294,13 @@ CLAN_WITHDRAW_AMOUNT = 700           # сколько монет можно за
 CLAN_WITHDRAW_MIN_TREASURY = 1000    # неприкосновенный минимум, который должен остаться в казне
 CLAN_WITHDRAW_COOLDOWN_HOURS = 2     # раз в сколько часов на каждого участника
 
-# --- ОДНОРАЗОВЫЙ БОНУС ПРИ ПОКУПКЕ PREMIUM ---
-# Выдаётся один раз навсегда на аккаунт при первой покупке Premium — любым
-# способом (за Gems или за Telegram Stars), повторные покупки/продления его
-# не выдают повторно (см. users.premium_bonus_claimed)
+# --- БОНУСЫ ПРИ ПОКУПКЕ PREMIUM ---
+# Выдаётся при КАЖДОЙ покупке/продлении Premium за Stars (по явной просьбе —
+# раньше было один раз, игрокам это не понравилось).
 PREMIUM_BONUS_PACKS = {"standard": 5, "rare": 4, "epic": 3, "legendary": 3, "mythic": 1}
+# А это — отдельный РАЗОВЫЙ бонус именно за ПЕРВУЮ покупку Premium (этап C
+# ТЗ), поверх PREMIUM_BONUS_PACKS выше. Клеймится через users.premium_bonus_claimed.
+PREMIUM_FIRST_PURCHASE_PACKS = {"legendary": 3}
 
 # --- ОПЛАТА TELEGRAM STARS (валюта XTR, без provider_token) ---
 # (алмазы, ⭐)

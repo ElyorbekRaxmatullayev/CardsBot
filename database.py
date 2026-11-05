@@ -1422,6 +1422,21 @@ def grant_premium_bonus_packs(user_id):
     return True
 
 
+def grant_first_purchase_premium_bonus(user_id):
+    """Разовый бонус именно за ПЕРВУЮ покупку Premium (этап C ТЗ) — поверх
+    обычных бонус-паков за каждую покупку. Атомарный клейм по
+    premium_bonus_claimed (0->1), чтобы не выдать дважды. Возвращает True,
+    если бонус выдан именно сейчас (False — уже был выдан раньше)."""
+    from config import PREMIUM_FIRST_PURCHASE_PACKS
+    claim = supabase.table("users").update({"premium_bonus_claimed": 1}).eq(
+        "telegram_id", user_id).eq("premium_bonus_claimed", 0).execute()
+    if not claim.count:
+        return False
+    for pack_type, count in PREMIUM_FIRST_PURCHASE_PACKS.items():
+        add_pack_to_user(user_id, pack_type, count)
+    return True
+
+
 def set_card_stars_price(card_id, price):
     """Задаёт цену в ⭐ для конкретной карты (используется для Limited)"""
     supabase.table("cards").update({"stars_price": price}).eq("id", card_id).execute()
@@ -1493,7 +1508,7 @@ def do_farm_coins(user_id):
     получить фарм по нескольку раз — именно так монеты и накручивали.
     Возвращает amount (0, если кулдаун не прошёл или клейм проиграл гонку)."""
     import random
-    from config import FARM_MAX_COINS, FARM_COOLDOWN_HOURS
+    from config import FARM_MAX_COINS, FARM_COOLDOWN_HOURS, FARM_PREMIUM_BONUS_PERCENT
 
     user = get_user_data(user_id)
     if not user:
@@ -1507,6 +1522,8 @@ def do_farm_coins(user_id):
             return 0
 
     amount = random.randint(1, FARM_MAX_COINS)
+    if is_premium(user):
+        amount = int(amount * (1 + FARM_PREMIUM_BONUS_PERCENT / 100))
     q = supabase.table("users").update({
         "coins": user['coins'] + amount,
         "last_farm_at": now.isoformat(),
