@@ -430,20 +430,25 @@ def find_opponent(user_id):
 
 
 def update_battle_stats(winner_id, loser_id, w_dmg=0, l_dmg=0):
+    from config import CULTIVATION_XP_WIN, CULTIVATION_XP_LOSS
+
     # Победитель
-    w = supabase.table("users").select("coins, rating, battles_won, battles_total, total_damage_dealt").eq("telegram_id",
-                                                                                       winner_id).execute().data[0]
+    w = supabase.table("users").select(
+        "coins, rating, battles_won, battles_total, total_damage_dealt, cultivation_xp").eq(
+        "telegram_id", winner_id).execute().data[0]
     w_dmg_prev = w.get('total_damage_dealt', 0) or 0
     supabase.table("users").update({
         "coins": w['coins'] + 10,  # Награда
         "rating": w['rating'] + 25,
         "battles_won": w['battles_won'] + 1,
         "battles_total": w['battles_total'] + 1,
-        "total_damage_dealt": w_dmg_prev + w_dmg
+        "total_damage_dealt": w_dmg_prev + w_dmg,
+        "cultivation_xp": (w.get('cultivation_xp') or 0) + CULTIVATION_XP_WIN,
     }).eq("telegram_id", winner_id).execute()
 
     # Проигравший
-    l = supabase.table("users").select("rating, battles_total, total_damage_dealt").eq("telegram_id", loser_id).execute().data[0]
+    l = supabase.table("users").select(
+        "rating, battles_total, total_damage_dealt, cultivation_xp").eq("telegram_id", loser_id).execute().data[0]
     new_rating = l['rating'] - 15
     if new_rating < 0: new_rating = 0
     l_dmg_prev = l.get('total_damage_dealt', 0) or 0
@@ -451,7 +456,8 @@ def update_battle_stats(winner_id, loser_id, w_dmg=0, l_dmg=0):
     supabase.table("users").update({
         "rating": new_rating,
         "battles_total": l['battles_total'] + 1,
-        "total_damage_dealt": l_dmg_prev + l_dmg
+        "total_damage_dealt": l_dmg_prev + l_dmg,
+        "cultivation_xp": (l.get('cultivation_xp') or 0) + CULTIVATION_XP_LOSS,
     }).eq("telegram_id", loser_id).execute()
 
 
@@ -963,6 +969,79 @@ def get_effective_stats(attack, hp, level):
     eff_attack = min(int(attack * mult), MAX_CARD_STAT)
     eff_hp = min(int(hp * mult), MAX_CARD_STAT)
     return eff_attack, eff_hp
+
+
+# --- КУЛЬТИВАЦИЯ ---
+
+def get_cultivation_info(xp):
+    """Чистая функция: по суммарному опыту культивации (users.cultivation_xp)
+    считает уровень, текущую стадию и прогресс до следующей. Уровень и
+    стадия нигде отдельно не хранятся — всегда выводятся из xp, поэтому
+    рейтинг культиваторов можно просто сортировать по xp."""
+    from config import CULTIVATION_XP_PER_LEVEL, CULTIVATION_STAGES
+    xp = xp or 0
+    level = xp // CULTIVATION_XP_PER_LEVEL
+
+    stage_index = 0
+    for i, (_, threshold) in enumerate(CULTIVATION_STAGES):
+        if xp >= threshold:
+            stage_index = i
+        else:
+            break
+    stage_name, stage_start = CULTIVATION_STAGES[stage_index]
+
+    if stage_index + 1 < len(CULTIVATION_STAGES):
+        next_name, next_threshold = CULTIVATION_STAGES[stage_index + 1]
+        # Прогресс — это xp/next_threshold (НЕ прогресс внутри текущей
+        # стадии) — так в примере из ТЗ: 32 500/47 000 опыта = 69%.
+        progress_percent = min(100, int(xp / next_threshold * 100)) if next_threshold else 100
+        xp_remaining = max(0, next_threshold - xp)
+    else:
+        next_name, next_threshold = None, None
+        progress_percent = 100
+        xp_remaining = 0
+
+    return {
+        "level": level,
+        "xp": xp,
+        "stage_index": stage_index,
+        "stage_name": stage_name,
+        "next_stage_name": next_name,
+        "next_stage_xp": next_threshold,
+        "progress_percent": progress_percent,
+        "xp_remaining": xp_remaining,
+    }
+
+
+def add_cultivation_xp(user_id, amount):
+    """Начисляет опыт культивации (может быть 0, тогда просто ничего не
+    делает). Не атомарный клейм (как update_coins) — гонка на +N к счётчику
+    опыта в худшем случае потеряет несколько XP, не критично для прогресса."""
+    if not amount:
+        return
+    user = get_user_data(user_id)
+    if not user:
+        return
+    new_xp = (user.get('cultivation_xp') or 0) + amount
+    supabase.table("users").update({"cultivation_xp": new_xp}).eq("telegram_id", user_id).execute()
+
+
+def get_squad_power(user_id):
+    """Суммарная 'сила' отряда — сумма эффективных атаки+HP (после бонуса
+    улучшения) всех карт в отряде. Для показа в профиле культиватора."""
+    squad = get_user_squad(user_id)
+    total = 0
+    for c in squad:
+        eff_atk, eff_hp = get_effective_stats(c.get('attack', 0), c.get('hp', 0), c.get('card_level', 1))
+        total += eff_atk + eff_hp
+    return total
+
+
+def get_top_cultivators(limit=10):
+    """Топ игроков по культивации — сортировка по суммарному опыту уже даёт
+    правильный порядок (выше стадия = больше опыта = выше в списке)."""
+    res = supabase.table("users").select("first_name, cultivation_xp").order("cultivation_xp", desc=True).limit(limit).execute()
+    return res.data or []
 
 
 def fuse_cards(user_id, card_id):

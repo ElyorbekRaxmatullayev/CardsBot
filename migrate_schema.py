@@ -46,6 +46,7 @@ EXTRA_COLUMNS = {
         # уже играет; иначе миграция раздала бы бесплатные карты всем подряд
         ("free_draws_remaining", "INTEGER DEFAULT 0"),
         ("premium_bonus_claimed", "INTEGER DEFAULT 0"),
+        ("cultivation_xp", "INTEGER DEFAULT 0"),
     ],
     "marriages": [
         ("married_at", "TIMESTAMP"),

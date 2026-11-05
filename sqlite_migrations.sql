@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS users (
     total_damage_dealt INTEGER DEFAULT 0,
     last_clan_withdraw TIMESTAMP,
     free_draws_remaining INTEGER DEFAULT 0,
-    premium_bonus_claimed INTEGER DEFAULT 0
+    premium_bonus_claimed INTEGER DEFAULT 0,
+    cultivation_xp INTEGER DEFAULT 0
 );
 
 -- 2. CARDS

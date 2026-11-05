@@ -7,7 +7,8 @@ from database import (get_or_create_user, get_user_data, get_top_by_coins,
                       check_daily_bonus, set_daily_bonus_taken,
                       add_card_to_user, get_all_cards, get_user_gems, get_user_rank,
                       get_top_by_damage, check_farm_available, do_farm_coins,
-                      get_user_marriage, get_top_clans_by_treasury, get_top_clans_by_war_wins)
+                      get_user_marriage, get_top_clans_by_treasury, get_top_clans_by_war_wins,
+                      get_cultivation_info, get_squad_power, get_top_cultivators)
 from database import is_premium, get_clan_name, is_user_banned, update_task_progress, on_card_obtained
 from loader import bot
 from utils import safe_send_message, safe_edit_message, reply_match
@@ -73,6 +74,7 @@ def get_rating_markup():
         types.InlineKeyboardButton("🃏 По кол-ву карт", callback_data="top_count"),
         types.InlineKeyboardButton("💎 По гемам", callback_data="top_gems"),
         types.InlineKeyboardButton("⚔️ По урону (Арена)", callback_data="top_damage"),
+        types.InlineKeyboardButton("🧘 Культиваторы", callback_data="top_cult"),
         types.InlineKeyboardButton("🏰 Казна клана", callback_data="top_treasury"),
         types.InlineKeyboardButton("🏰 Победы в войнах", callback_data="top_warwins"),
         types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu")
@@ -222,12 +224,26 @@ def callback_profile(call):
     else:
         marriage_txt = "❌ Нет"
 
-    txt = (f"👤 <b>Профиль игрока</b>\n"
+    # Культивация
+    cult = get_cultivation_info(user.get('cultivation_xp'))
+    power = get_squad_power(user_id)
+    if cult['next_stage_name']:
+        cult_progress_txt = (f"🧘 <b>Опыт:</b> {cult['xp']} / {cult['next_stage_xp']} ({cult['progress_percent']}%)\n"
+                             f"⏳ <b>До след. стадии:</b> {cult['xp_remaining']} опыта\n")
+    else:
+        cult_progress_txt = f"🧘 <b>Опыт:</b> {cult['xp']} (максимальная стадия)\n"
+
+    txt = (f"👤 <b>Профиль культиватора</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"📛 <b>Ник:</b> {user['first_name']}\n"
            f"🏰 <b>Клан:</b> {clan_name}\n"
            f"❤️ <b>Брак:</b> {marriage_txt}\n"
            f"🏆 <b>Место в рейтинге:</b> #{rank}\n"
+           f"➖➖➖➖➖➖➖➖\n"
+           f"🔺 <b>Уровень:</b> {cult['level']}\n"
+           f"🌀 <b>Стадия:</b> {cult['stage_name']}\n"
+           f"{cult_progress_txt}"
+           f"🔥 <b>Сила культиватора:</b> {power}\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"💰 <b>Монеты:</b> {user['coins']}\n"
            f"💎 <b>Gems:</b> {gems}\n"
@@ -273,6 +289,21 @@ def show_top(call):
     bot.answer_callback_query(call.id)
     category = call.data.split("_")[1]
     txt = "🏆 <b>Топ игроков</b>\n\n"
+
+    if category == "cult":
+        rows = get_top_cultivators()
+        medals = ["🥇", "🥈", "🥉"]
+        txt = "🧘 <b>Топ культиваторов</b>\n\n"
+        if not rows:
+            txt += "Пока пусто..."
+        else:
+            for i, u in enumerate(rows):
+                info = get_cultivation_info(u.get('cultivation_xp'))
+                medal = medals[i] if i < 3 else f"{i + 1}."
+                txt += f"{medal} <b>{u.get('first_name', '?')}</b> — {info['stage_name']} (ур. {info['level']})\n"
+        safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
+                          reply_markup=get_rating_markup(), parse_mode="HTML")
+        return
 
     if category == "refs":
         data = get_top_by_referrals()
