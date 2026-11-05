@@ -147,7 +147,6 @@ def game_menu_handler(message):
 def about_handler(message):
     txt = ("‼️ <b>Информация о нас.</b>\n"
            "➖➖➖➖➖➖\n"
-           "❓ Аккаунты поддержки: @Devils_Time, @angeL_870\n\n"
            "<a href='https://telegra.ph/Politika-konfidencialnosti-Telegram-bota-12-24'>Политика конфиденциальности</a>\n"
            "<a href='https://telegra.ph/Polzovatelskoe-soglashenie'>Пользовательское соглашение</a>")
     safe_send_message(bot, message.chat.id, txt, reply_markup=get_back_markup(), parse_mode="HTML", owner_id=message.from_user.id)
