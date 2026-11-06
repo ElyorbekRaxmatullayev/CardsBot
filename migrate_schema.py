@@ -48,6 +48,7 @@ EXTRA_COLUMNS = {
         ("premium_bonus_claimed", "INTEGER DEFAULT 0"),
         ("cultivation_xp", "INTEGER DEFAULT 0"),
         ("fuse_charges", "INTEGER DEFAULT 0"),
+        ("fragments", "INTEGER DEFAULT 0"),
     ],
     "marriages": [
         ("married_at", "TIMESTAMP"),

@@ -275,6 +275,8 @@ def build_profile_text(user_id):
            f"➖➖➖➖➖➖➖➖\n"
            f"💰 <b>Монеты:</b> {user['coins']}\n"
            f"💎 <b>Gems:</b> {gems}\n"
+           f"💠 <b>Фрагменты:</b> {user.get('fragments') or 0}\n"
+           f"🔀 <b>Попыток улучшения:</b> {user.get('fuse_charges') or 0}\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"⚔️ <b>Побед:</b> {wins} / {total}  ({winrate})\n"
            f"📦 <b>Открыто паков:</b> {packs_opened}\n"

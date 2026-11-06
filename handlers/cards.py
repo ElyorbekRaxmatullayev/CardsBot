@@ -2,12 +2,12 @@ import random
 from datetime import datetime, timedelta, timezone
 from telebot import types
 from loader import bot
-from config import RARITY_CONFIG, RARITY_ORDER, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM
+from config import RARITY_CONFIG, RARITY_ORDER, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, FRAGMENTS_PER_RARITY, FRAGMENTS_PER_DRAW
 from database import get_all_cards, get_user_data, add_card_to_user, update_last_drop, get_user_inventory, \
     get_user_squad, toggle_squad_member, fuse_card_with_charge, is_premium, is_user_banned, update_task_progress, \
     on_card_obtained, consume_free_draw, get_effective_stats, \
-    fuse_card_max_with_charges
-from utils import reply_match, safe_send_message, _msg_owners
+    fuse_card_max_with_charges, disenchant_card_duplicates, draw_card_with_fragments
+from utils import reply_match, safe_send_message, safe_edit_message, _msg_owners
 
 
 def drop_random_card_logic():
@@ -145,9 +145,51 @@ def inventory_menu(message, user_id=None):
         text = f"{cfg['emoji']} {cfg['ru']} ({cnt})"
         btns.append(types.InlineKeyboardButton(text, callback_data=f"inv_open:{r}"))
     markup.add(*btns)
+    fragments = (get_user_data(user_id) or {}).get('fragments') or 0
+    markup.add(types.InlineKeyboardButton(f"💠 Фрагменты: {fragments}/{FRAGMENTS_PER_DRAW}", callback_data="frags_menu"))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
 
     safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "frags_menu")
+def frags_menu(call):
+    """Этап D п.2 ТЗ — фрагменты от переработки дублей карт, FRAGMENTS_PER_DRAW
+    штук конвертируются в 1 случайную карту."""
+    bot.answer_callback_query(call.id)
+    fragments = (get_user_data(call.from_user.id) or {}).get('fragments') or 0
+
+    txt = (f"💠 <b>Фрагменты</b>\n"
+           f"➖➖➖➖➖➖➖➖\n"
+           f"У вас: <b>{fragments}</b> фрагментов\n\n"
+           f"Переработайте лишние копии карт (кнопка ♻️ на экране карты) — "
+           f"каждые {FRAGMENTS_PER_DRAW} фрагментов можно обменять на случайную карту.")
+
+    markup = types.InlineKeyboardMarkup()
+    if fragments >= FRAGMENTS_PER_DRAW:
+        markup.add(types.InlineKeyboardButton(
+            f"🎴 Получить карту ({FRAGMENTS_PER_DRAW}💠)", callback_data="frags_draw"))
+    else:
+        markup.add(types.InlineKeyboardButton(
+            f"🎴 Получить карту ({FRAGMENTS_PER_DRAW}💠)", callback_data="ignore"))
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_collection"))
+
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
+                      reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "frags_draw")
+def frags_draw(call):
+    success, result, is_dup, count = draw_card_with_fragments(call.from_user.id)
+    if not success:
+        bot.answer_callback_query(call.id, result, show_alert=True)
+        return
+
+    card = result
+    update_task_progress(call.from_user.id, "get_card", "daily")
+    emoji = RARITY_CONFIG.get(card['rarity'], {}).get('emoji', '')
+    bot.answer_callback_query(call.id, f"✨ Получена карта: {emoji} {card['name']}!", show_alert=True)
+    frags_menu(call)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("inv_"))
@@ -227,6 +269,15 @@ def inventory_nav(call):
         markup.row(types.InlineKeyboardButton(
             f"⚡ Прокачать до предела (+{user_charges} ур.)",
             callback_data=f"fuse_max:{card['id']}:{rarity}:{index}"))
+
+    # КНОПКА ПЕРЕРАБОТКИ ДУБЛЕЙ (этап D п.2 ТЗ) — лишние копии в фрагменты,
+    # последняя копия всегда остаётся.
+    if item['count'] > 1:
+        per_copy = FRAGMENTS_PER_RARITY.get(card['rarity'], 1)
+        extra = item['count'] - 1
+        markup.row(types.InlineKeyboardButton(
+            f"♻️ Переработать дубли ({extra} шт → {extra * per_copy}💠)",
+            callback_data=f"disenchant:{card['id']}:{rarity}:{index}"))
 
     # Стандартные кнопки навигации
     markup.row(
@@ -333,6 +384,27 @@ def handler_fuse_max(call):
         update_task_progress(call.from_user.id, "fuse_card", "daily", increment=charges_used)
         bot.answer_callback_query(call.id,
                                   f"⚡ Карта улучшена на {charges_used} ур. до уровня {result}!", show_alert=True)
+    else:
+        bot.answer_callback_query(call.id, result, show_alert=True)
+        return
+
+    call.data = f"inv_nav:{rarity}:{index}"
+    inventory_nav(call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("disenchant:"))
+def handler_disenchant(call):
+    # disenchant:CARD_ID:RARITY:INDEX
+    parts = call.data.split(":")
+    card_id = int(parts[1])
+    rarity = parts[2]
+    index = parts[3]
+
+    success, result, copies_used = disenchant_card_duplicates(call.from_user.id, card_id)
+
+    if success:
+        bot.answer_callback_query(call.id,
+                                  f"♻️ Переработано {copies_used} копий → +{result}💠 фрагментов!", show_alert=True)
     else:
         bot.answer_callback_query(call.id, result, show_alert=True)
         return

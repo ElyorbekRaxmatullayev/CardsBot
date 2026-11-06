@@ -1127,6 +1127,75 @@ def fuse_card_max_with_charges(user_id, card_id):
     return True, new_level, charges
 
 
+# --- ФРАГМЕНТЫ (этап D п.2 ТЗ) ---
+
+def disenchant_card_duplicates(user_id, card_id):
+    """Перерабатывает ВСЕ ЛИШНИЕ копии карты (кроме последней — разбирать
+    можно только дубли) в фрагменты, по курсу FRAGMENTS_PER_RARITY для её
+    редкости. Возвращает (success, fragments_gained_or_error, copies_used)."""
+    from config import FRAGMENTS_PER_RARITY
+    existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
+    if not existing.data:
+        return False, "У вас нет этой карты", 0
+    row = existing.data[0]
+    count = row['count']
+    if count <= 1:
+        return False, "Нет лишних копий для переработки", 0
+
+    card = get_card_by_id(card_id)
+    rarity = card.get('rarity') if card else None
+    per_copy = FRAGMENTS_PER_RARITY.get(rarity, 1)
+    copies_to_use = count - 1
+    fragments_gained = per_copy * copies_to_use
+
+    # Атомарный клейм по прочитанному count — иначе двойной клик мог бы
+    # перемолоть одни и те же копии дважды
+    claim = supabase.table("user_cards").update({"count": 1}).eq(
+        "id", row['id']).eq("count", count).execute()
+    if not claim.count:
+        return False, "Не удалось переработать — попробуйте ещё раз", 0
+
+    user = get_user_data(user_id)
+    new_fragments = (user.get('fragments') or 0) + fragments_gained
+    supabase.table("users").update({"fragments": new_fragments}).eq("telegram_id", user_id).execute()
+    return True, fragments_gained, copies_to_use
+
+
+def draw_card_with_fragments(user_id):
+    """Тратит FRAGMENTS_PER_DRAW фрагментов на одну случайную карту — та же
+    весовая схема редкостей, что у обычного инстант-получения карты.
+    Возвращает (success, card_or_error_message, is_dup, count)."""
+    import random
+    from config import FRAGMENTS_PER_DRAW, RARITY_CONFIG
+
+    user = get_user_data(user_id)
+    if not user:
+        return False, "Ошибка", False, 0
+    fragments = user.get('fragments') or 0
+    if fragments < FRAGMENTS_PER_DRAW:
+        return False, f"Нужно {FRAGMENTS_PER_DRAW} фрагментов (у вас {fragments})", False, 0
+
+    # Атомарный клейм по прочитанному значению — иначе двойной клик мог бы
+    # потратить одни и те же фрагменты дважды
+    claim = supabase.table("users").update({"fragments": fragments - FRAGMENTS_PER_DRAW}).eq(
+        "telegram_id", user_id).eq("fragments", fragments).execute()
+    if not claim.count:
+        return False, "Не удалось — попробуйте ещё раз", False, 0
+
+    cards = get_all_cards()
+    if not cards:
+        supabase.table("users").update({"fragments": fragments}).eq("telegram_id", user_id).execute()
+        return False, "Карты не найдены", False, 0
+    population, weights = [], []
+    for c in cards:
+        population.append(c)
+        weights.append(RARITY_CONFIG.get(c['rarity'], {}).get('chance', 1))
+    card = random.choices(population, weights=weights, k=1)[0]
+    is_dup, count = add_card_to_user(user_id, card['id'])
+    on_card_obtained(user_id, card, is_dup)
+    return True, card, is_dup, count
+
+
 # --- КЛАН: ВЫХОД И ВСТУПЛЕНИЕ ---
 
 def leave_clan(user_id):

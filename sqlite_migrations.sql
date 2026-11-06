@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS users (
     free_draws_remaining INTEGER DEFAULT 0,
     premium_bonus_claimed INTEGER DEFAULT 0,
     cultivation_xp INTEGER DEFAULT 0,
-    fuse_charges INTEGER DEFAULT 0
+    fuse_charges INTEGER DEFAULT 0,
+    fragments INTEGER DEFAULT 0
 );
 
 -- 2. CARDS
