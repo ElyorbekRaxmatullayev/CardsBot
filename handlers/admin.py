@@ -12,7 +12,8 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
                       toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids,
-                      set_card_stars_price, grant_premium, grant_bonus_to_all_users, reset_user_account)
+                      set_card_stars_price, grant_premium, grant_bonus_to_all_users, reset_user_account,
+                      reset_all_player_cards)
 from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
@@ -77,6 +78,8 @@ def admin_start(message, user_id=None):
     if is_head_admin(user_id):
         row.insert(0, types.InlineKeyboardButton("👑 Админы", callback_data="adm_admins"))
     markup.row(*row)
+    if is_head_admin(user_id):
+        markup.row(types.InlineKeyboardButton("🔄 Новый сезон (сброс карт у ВСЕХ)", callback_data="adm_season_reset_start"))
 
     role = get_admin_role(user_id)
     role_txt = "👑 Гл. Администратор" if role == 'head' else "🛡 Админ"
@@ -1373,3 +1376,45 @@ def _notify_bonus_all(coins, gems, free_draws):
         except Exception:
             pass
         time.sleep(0.05)
+
+
+# --- НОВЫЙ СЕЗОН: СБРОС КАРТ У ВСЕХ ИГРОКОВ (этап D п.3 ТЗ) ---
+# Самое разрушительное действие в боте — затрагивает ВСЕХ игроков разом и
+# необратимо, поэтому доступно только гл. администратору и требует набрать
+# точную фразу подтверждения, а не просто тапнуть кнопку.
+
+SEASON_RESET_CONFIRM_PHRASE = "СБРОСИТЬ СЕЗОН"
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_season_reset_start")
+def adm_season_reset_start(call):
+    if not is_head_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    users_count = get_all_users_count()
+    msg = bot.send_message(call.message.chat.id,
+                           f"⚠️⚠️⚠️ <b>НОВЫЙ СЕЗОН — СБРОС КАРТ У ВСЕХ ИГРОКОВ</b>\n\n"
+                           f"Это НЕОБРАТИМО удалит ВСЕ карты и слоты отряда у "
+                           f"<b>{users_count}</b> игроков разом.\n\n"
+                           f"НЕ трогает: монеты, Gems, фрагменты, попытки улучшения, "
+                           f"культивацию (уровень/опыт), кланы, браки, задания, паки.\n\n"
+                           f"Чтобы подтвердить, отправь точную фразу:\n"
+                           f"<code>{SEASON_RESET_CONFIRM_PHRASE}</code>\n\n"
+                           f"Любое другое сообщение — отмена.",
+                           parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _season_reset_confirm_step)
+
+
+def _season_reset_confirm_step(message):
+    if not is_head_admin(message.from_user.id):
+        return
+    if message.text.strip() != SEASON_RESET_CONFIRM_PHRASE:
+        bot.send_message(message.chat.id, "Отменено.", reply_markup=_adm_back_markup())
+        return
+
+    cards_deleted, squads_deleted = reset_all_player_cards()
+    bot.send_message(message.chat.id,
+                     f"✅ <b>Новый сезон начался!</b>\n\n"
+                     f"Удалено карт: {cards_deleted}\n"
+                     f"Очищено слотов отряда: {squads_deleted}",
+                     reply_markup=_adm_back_markup(), parse_mode="HTML")

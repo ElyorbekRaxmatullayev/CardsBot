@@ -1791,6 +1791,19 @@ def reset_user_account(telegram_id):
     return summary
 
 
+def reset_all_player_cards():
+    """АДМИН, этап D п.3 ТЗ: "новый сезон" — обнуляет карты ВСЕХ игроков
+    разом. Удаляет ВСЕ строки user_cards и user_squads (слоты отряда всё
+    равно ссылались бы на карты, которых больше нет). НЕ трогает: монеты,
+    Gems, фрагменты, попытки улучшения, культивацию (уровень/опыт), кланы,
+    браки, задания/достижения, паки, маркет — "всё остальное как есть".
+    У кого накоплены фрагменты — быстрее проскочит начало сезона заново.
+    Необратимо. Возвращает (cards_deleted, squads_deleted)."""
+    cards_res = supabase.table("user_cards").delete().execute()
+    squads_res = supabase.table("user_squads").delete().execute()
+    return cards_res.count or 0, squads_res.count or 0
+
+
 # --- ВСЕ КЛАНЫ ---
 
 def get_all_clans_list(page=0, page_size=8):
