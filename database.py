@@ -429,36 +429,59 @@ def find_opponent(user_id):
     return None, None
 
 
+def _apply_cultivation_xp_update(update_dict, user_row, xp_amount):
+    """Добавляет прирост опыта культивации в update_dict (для последующего
+    единого .update()) и, если это пересекает границу уровня, начисляет
+    FUSE_CHARGES_PER_LEVEL попыток улучшения карт (этап D ТЗ — вместо копий
+    +монет улучшение теперь даётся левел-апом) за каждый полученный уровень.
+    Возвращает, сколько уровней было получено (0, если ни одного)."""
+    from config import CULTIVATION_XP_PER_LEVEL, FUSE_CHARGES_PER_LEVEL
+    old_xp = user_row.get('cultivation_xp') or 0
+    new_xp = old_xp + xp_amount
+    update_dict["cultivation_xp"] = new_xp
+    old_level = old_xp // CULTIVATION_XP_PER_LEVEL
+    new_level = new_xp // CULTIVATION_XP_PER_LEVEL
+    levels_gained = new_level - old_level
+    if levels_gained > 0:
+        update_dict["fuse_charges"] = (user_row.get('fuse_charges') or 0) + FUSE_CHARGES_PER_LEVEL * levels_gained
+    return levels_gained
+
+
 def update_battle_stats(winner_id, loser_id, w_dmg=0, l_dmg=0):
     from config import CULTIVATION_XP_WIN, CULTIVATION_XP_LOSS
 
     # Победитель
     w = supabase.table("users").select(
-        "coins, rating, battles_won, battles_total, total_damage_dealt, cultivation_xp").eq(
+        "coins, rating, battles_won, battles_total, total_damage_dealt, cultivation_xp, fuse_charges").eq(
         "telegram_id", winner_id).execute().data[0]
     w_dmg_prev = w.get('total_damage_dealt', 0) or 0
-    supabase.table("users").update({
+    w_update = {
         "coins": w['coins'] + 10,  # Награда
         "rating": w['rating'] + 25,
         "battles_won": w['battles_won'] + 1,
         "battles_total": w['battles_total'] + 1,
         "total_damage_dealt": w_dmg_prev + w_dmg,
-        "cultivation_xp": (w.get('cultivation_xp') or 0) + CULTIVATION_XP_WIN,
-    }).eq("telegram_id", winner_id).execute()
+    }
+    w_levels_gained = _apply_cultivation_xp_update(w_update, w, CULTIVATION_XP_WIN)
+    supabase.table("users").update(w_update).eq("telegram_id", winner_id).execute()
 
     # Проигравший
     l = supabase.table("users").select(
-        "rating, battles_total, total_damage_dealt, cultivation_xp").eq("telegram_id", loser_id).execute().data[0]
+        "rating, battles_total, total_damage_dealt, cultivation_xp, fuse_charges").eq(
+        "telegram_id", loser_id).execute().data[0]
     new_rating = l['rating'] - 15
     if new_rating < 0: new_rating = 0
     l_dmg_prev = l.get('total_damage_dealt', 0) or 0
 
-    supabase.table("users").update({
+    l_update = {
         "rating": new_rating,
         "battles_total": l['battles_total'] + 1,
         "total_damage_dealt": l_dmg_prev + l_dmg,
-        "cultivation_xp": (l.get('cultivation_xp') or 0) + CULTIVATION_XP_LOSS,
-    }).eq("telegram_id", loser_id).execute()
+    }
+    _apply_cultivation_xp_update(l_update, l, CULTIVATION_XP_LOSS)
+    supabase.table("users").update(l_update).eq("telegram_id", loser_id).execute()
+
+    return w_levels_gained
 
 
 
@@ -950,15 +973,6 @@ def get_user_rank(user_id):
 
 # --- УЛУЧШЕНИЕ КАРТ (FUSION) ---
 
-def get_fuse_requirements(current_level=None):
-    """Сколько копий (всего, включая саму карту) и монет нужно для
-    слияния — плоско, не зависит от уровня/редкости (по просьбе откатили
-    табличную систему роста). current_level принимается для совместимости
-    вызовов, но не используется."""
-    from config import FUSE_REQUIRED_COPIES, FUSE_COST_COINS
-    return FUSE_REQUIRED_COPIES, FUSE_COST_COINS
-
-
 def get_effective_stats(attack, hp, level):
     """Применяет бонус уровня (от слияния дублей) к атаке/HP карты, с жёстким
     потолком MAX_CARD_STAT — выше него характеристики не растут ни при каких
@@ -1015,15 +1029,19 @@ def get_cultivation_info(xp):
 
 def add_cultivation_xp(user_id, amount):
     """Начисляет опыт культивации (может быть 0, тогда просто ничего не
-    делает). Не атомарный клейм (как update_coins) — гонка на +N к счётчику
-    опыта в худшем случае потеряет несколько XP, не критично для прогресса."""
+    делает), и попытки улучшения карт за левел-ап, если он произошёл. Не
+    атомарный клейм (как update_coins) — гонка на +N к счётчику опыта в
+    худшем случае потеряет несколько XP, не критично для прогресса.
+    Возвращает, сколько уровней было получено (0, если ни одного)."""
     if not amount:
-        return
+        return 0
     user = get_user_data(user_id)
     if not user:
-        return
-    new_xp = (user.get('cultivation_xp') or 0) + amount
-    supabase.table("users").update({"cultivation_xp": new_xp}).eq("telegram_id", user_id).execute()
+        return 0
+    update = {}
+    levels_gained = _apply_cultivation_xp_update(update, user, amount)
+    supabase.table("users").update(update).eq("telegram_id", user_id).execute()
+    return levels_gained
 
 
 def get_squad_power(user_id):
@@ -1044,94 +1062,69 @@ def get_top_cultivators(limit=10):
     return res.data or []
 
 
-def fuse_cards(user_id, card_id):
-    """Улучшает карту на +1 уровень — ровно FUSE_REQUIRED_COPIES копий
-    (всего, включая саму карту) + FUSE_COST_COINS монет, одинаково на любом
-    уровне (без роста, без потолка по уровню). Возвращает
-    (success, new_level_or_error_message)."""
-    copies_required, cost = get_fuse_requirements()
+def fuse_card_with_charge(user_id, card_id):
+    """Улучшает карту на +1 уровень, тратя 1 попытку улучшения
+    (users.fuse_charges) — этап D ТЗ: копии и монеты больше не нужны,
+    попытки начисляются за левел-ап культивации (FUSE_CHARGES_PER_LEVEL).
+    Возвращает (success, new_level_or_error_message)."""
+    user = get_user_data(user_id)
+    if not user:
+        return False, "Ошибка"
+    charges = user.get('fuse_charges') or 0
+    if charges < 1:
+        return False, "Нет попыток улучшения — получайте их за левел-ап культивации"
 
     existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
-    if not existing.data or existing.data[0]['count'] < copies_required:
-        have = existing.data[0]['count'] if existing.data else 0
-        return False, f"Нужно минимум {copies_required} копии (у вас {have})"
+    if not existing.data:
+        return False, "У вас нет этой карты"
     row = existing.data[0]
     current_level = row.get('card_level', 1) or 1
-
-    if cost > 0 and not update_coins(user_id, -cost):
-        return False, f"Нужно {cost} 💰 на улучшение"
-
-    # +1, т.к. слияние объединяет copies_required копий в ОДНУ прокачанную —
-    # карта не исчезает, а становится уровнем выше.
-    new_count = row['count'] - copies_required + 1
     new_level = current_level + 1
 
-    # Атомарный клейм по count, который только что прочитали — иначе двойной
-    # клик/автокликер мог бы улучшить карту дважды за одни и те же копии.
-    claim = supabase.table("user_cards").update({"count": new_count, "card_level": new_level}).eq(
-        "id", row['id']).eq("count", row['count']).execute()
+    # Клеймим попытку атомарно по прочитанному значению — иначе двойной
+    # клик мог бы потратить одну и ту же попытку дважды
+    claim = supabase.table("users").update({"fuse_charges": charges - 1}).eq(
+        "telegram_id", user_id).eq("fuse_charges", charges).execute()
     if not claim.count:
-        if cost > 0:
-            update_coins(user_id, cost)  # возвращаем монеты — слияние не состоялось
+        return False, "Не удалось улучшить — попробуйте ещё раз"
+
+    card_claim = supabase.table("user_cards").update({"card_level": new_level}).eq(
+        "id", row['id']).eq("card_level", current_level).execute()
+    if not card_claim.count:
+        supabase.table("users").update({"fuse_charges": charges}).eq("telegram_id", user_id).execute()
         return False, "Не удалось улучшить — попробуйте ещё раз"
     return True, new_level
 
 
-def get_max_fuse_count(user_id, card_id):
-    """Сколько раз подряд можно улучшить карту ПРЯМО СЕЙЧАС, упираясь либо
-    в копии, либо в монеты — для кнопки мгновенной прокачки «докуда хватит»."""
-    copies_required, cost = get_fuse_requirements()
-    net_loss = copies_required - 1  # копий тратится за 1 улучшение (сама карта остаётся)
-    if net_loss <= 0:
-        return 0
+def fuse_card_max_with_charges(user_id, card_id):
+    """Улучшает карту сразу на ВСЕ доступные попытки улучшения разом
+    (кнопка «Улучшить до предела»). Возвращает
+    (success, new_level_or_error_message, charges_used)."""
+    user = get_user_data(user_id)
+    if not user:
+        return False, "Ошибка", 0
+    charges = user.get('fuse_charges') or 0
+    if charges < 1:
+        return False, "Нет попыток улучшения — получайте их за левел-ап культивации", 0
 
     existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
     if not existing.data:
-        return 0
-    count = existing.data[0]['count']
-    by_copies = max(0, (count - 1) // net_loss)
-    if cost <= 0:
-        return by_copies
-
-    user = get_user_data(user_id)
-    coins = (user.get('coins') or 0) if user else 0
-    by_coins = coins // cost
-    return min(by_copies, by_coins)
-
-
-def fuse_cards_max(user_id, card_id):
-    """Улучшает карту сразу на столько уровней, на сколько хватает копий и
-    монет прямо сейчас (кнопка «Улучшить до предела»). Возвращает
-    (success, new_level_or_error_message, fuses_done, coins_spent)."""
-    copies_required, cost = get_fuse_requirements()
-    net_loss = copies_required - 1
-
-    fuses = get_max_fuse_count(user_id, card_id)
-    if fuses <= 0:
-        existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
-        have = existing.data[0]['count'] if existing.data else 0
-        if have < copies_required:
-            return False, f"Нужно минимум {copies_required} копии (у вас {have})", 0, 0
-        return False, f"Нужно {cost} 💰 на улучшение", 0, 0
-
-    existing = supabase.table("user_cards").select("*").eq("user_id", user_id).eq("card_id", card_id).execute()
+        return False, "У вас нет этой карты", 0
     row = existing.data[0]
     current_level = row.get('card_level', 1) or 1
-    total_cost = cost * fuses
-    new_count = row['count'] - net_loss * fuses
-    new_level = current_level + fuses
+    new_level = current_level + charges
 
-    if total_cost > 0 and not update_coins(user_id, -total_cost):
-        return False, f"Нужно {total_cost} 💰 на улучшение", 0, 0
-
-    # Тот же атомарный клейм по прочитанному count, что и в обычном fuse_cards
-    claim = supabase.table("user_cards").update({"count": new_count, "card_level": new_level}).eq(
-        "id", row['id']).eq("count", row['count']).execute()
+    claim = supabase.table("users").update({"fuse_charges": 0}).eq(
+        "telegram_id", user_id).eq("fuse_charges", charges).execute()
     if not claim.count:
-        if total_cost > 0:
-            update_coins(user_id, total_cost)
-        return False, "Не удалось улучшить — попробуйте ещё раз", 0, 0
-    return True, new_level, fuses, total_cost
+        return False, "Не удалось улучшить — попробуйте ещё раз", 0
+
+    card_claim = supabase.table("user_cards").update({"card_level": new_level}).eq(
+        "id", row['id']).eq("card_level", current_level).execute()
+    if not card_claim.count:
+        supabase.table("users").update({"fuse_charges": charges}).eq("telegram_id", user_id).execute()
+        return False, "Не удалось улучшить — попробуйте ещё раз", 0
+    return True, new_level, charges
 
 
 # --- КЛАН: ВЫХОД И ВСТУПЛЕНИЕ ---

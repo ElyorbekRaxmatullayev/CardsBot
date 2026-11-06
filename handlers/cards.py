@@ -4,9 +4,9 @@ from telebot import types
 from loader import bot
 from config import RARITY_CONFIG, RARITY_ORDER, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM
 from database import get_all_cards, get_user_data, add_card_to_user, update_last_drop, get_user_inventory, \
-    get_user_squad, toggle_squad_member, fuse_cards, is_premium, is_user_banned, update_task_progress, \
-    on_card_obtained, consume_free_draw, get_fuse_requirements, get_effective_stats, \
-    get_max_fuse_count, fuse_cards_max
+    get_user_squad, toggle_squad_member, fuse_card_with_charge, is_premium, is_user_banned, update_task_progress, \
+    on_card_obtained, consume_free_draw, get_effective_stats, \
+    fuse_card_max_with_charges
 from utils import reply_match, safe_send_message, _msg_owners
 
 
@@ -209,25 +209,23 @@ def inventory_nav(call):
 
     markup.row(squad_btn)  # Добавляем кнопку отряда первой строкой
 
-    # КНОПКА УЛУЧШЕНИЯ (слияние дублей) — плоско: FUSE_REQUIRED_COPIES копий
-    # (всего) + FUSE_COST_COINS монет, одинаково на любом уровне.
-    copies_needed, fuse_cost = get_fuse_requirements()
-    if item['count'] >= copies_needed:
+    # КНОПКА УЛУЧШЕНИЯ (этап D ТЗ) — копии и монеты больше не нужны, тратится
+    # попытка улучшения (fuse_charges), которая начисляется за левел-ап
+    # культивации (см. FUSE_CHARGES_PER_LEVEL в config.py).
+    user_charges = (get_user_data(call.from_user.id) or {}).get('fuse_charges') or 0
+    if user_charges >= 1:
         fuse_btn = types.InlineKeyboardButton(
-            f"🔀 Улучшить ({item['count']}/{copies_needed}, {fuse_cost}💰)",
+            f"🔀 Улучшить (+1 ур., попыток: {user_charges})",
             callback_data=f"fuse_card:{card['id']}:{rarity}:{index}")
     else:
         fuse_btn = types.InlineKeyboardButton(
-            f"🔀 Улучшить ({item['count']}/{copies_needed}, {fuse_cost}💰)",
-            callback_data="ignore")
+            "🔀 Улучшить (нет попыток)", callback_data="ignore")
     markup.row(fuse_btn)
 
-    # КНОПКА МГНОВЕННОЙ ПРОКАЧКИ — улучшает сразу на столько уровней, на
-    # сколько хватает копий и монет прямо сейчас (а не по одному клику).
-    max_fuses = get_max_fuse_count(call.from_user.id, card['id'])
-    if max_fuses > 0:
+    # КНОПКА МГНОВЕННОЙ ПРОКАЧКИ — тратит на эту карту СРАЗУ ВСЕ попытки.
+    if user_charges > 1:
         markup.row(types.InlineKeyboardButton(
-            f"⚡ Прокачать до предела (+{max_fuses} ур.)",
+            f"⚡ Прокачать до предела (+{user_charges} ур.)",
             callback_data=f"fuse_max:{card['id']}:{rarity}:{index}"))
 
     # Стандартные кнопки навигации
@@ -308,7 +306,7 @@ def handler_fuse_card(call):
     rarity = parts[2]
     index = parts[3]
 
-    success, result = fuse_cards(call.from_user.id, card_id)
+    success, result = fuse_card_with_charge(call.from_user.id, card_id)
 
     if success:
         update_task_progress(call.from_user.id, "fuse_card", "daily")
@@ -329,13 +327,12 @@ def handler_fuse_max(call):
     rarity = parts[2]
     index = parts[3]
 
-    success, result, fuses_done, coins_spent = fuse_cards_max(call.from_user.id, card_id)
+    success, result, charges_used = fuse_card_max_with_charges(call.from_user.id, card_id)
 
     if success:
-        update_task_progress(call.from_user.id, "fuse_card", "daily", increment=fuses_done)
+        update_task_progress(call.from_user.id, "fuse_card", "daily", increment=charges_used)
         bot.answer_callback_query(call.id,
-                                  f"⚡ Карта улучшена на {fuses_done} ур. до уровня {result}! "
-                                  f"Потрачено: {coins_spent}💰", show_alert=True)
+                                  f"⚡ Карта улучшена на {charges_used} ур. до уровня {result}!", show_alert=True)
     else:
         bot.answer_callback_query(call.id, result, show_alert=True)
         return

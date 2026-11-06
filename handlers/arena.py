@@ -255,7 +255,7 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
     p2_squad = get_user_squad(player2_id)
 
     def calc_stats(squad):
-        # Уровень карты после слияния дублей даёт бонус к atk/hp (см. fuse_cards),
+        # Уровень карты после улучшения даёт бонус к atk/hp (см. fuse_card_with_charge),
         # с потолком MAX_CARD_STAT на карту (см. get_effective_stats)
         hp = 0
         atk = 0
@@ -380,18 +380,22 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
         enemy_name_w = p1_user['first_name']
         enemy_name_l = p2_user['first_name']
 
-    update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
+    levels_gained = update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
 
     # Обновляем счётчики заданий: "провести бой" — обоим, "выиграть бой" — только победителю
     update_task_progress(player1_id, "arena_battle", "daily")
     update_task_progress(player2_id, "arena_battle", "daily")
     update_task_progress(winner_id, "battles_5", "weekly")
 
+    from config import FUSE_CHARGES_PER_LEVEL
+    level_up_txt = (f"\n\n🌀 <b>Новый уровень культивации!</b> +{levels_gained * FUSE_CHARGES_PER_LEVEL} "
+                    f"попыток улучшения карт" if levels_gained else "")
+
     res_win = (f"🏆 <b>ПОБЕДА!</b>\n\n"
                f"Противник: <b>{enemy_name_w}</b> повержен!\n"
                f"Ваше здоровье: {w_hp_left}\n"
                f"Урон нанесен: {w_dmg}\n\n"
-               f"💰 Награда: +10 монет, +25 рейтинга")
+               f"💰 Награда: +10 монет, +25 рейтинга{level_up_txt}")
 
     res_lose = (f"💀 <b>ПОРАЖЕНИЕ...</b>\n\n"
                 f"Противник: <b>{enemy_name_l}</b> оказался сильнее.\n"
@@ -516,7 +520,7 @@ def run_clan_war_battle(challenger_id, challenger_chat_id, challenger_clan, targ
         winner_clan, loser_clan = target_clan, challenger_clan
         w_dmg, l_dmg = p2_dmg_total, p1_dmg_total
 
-    update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
+    levels_gained = update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
     apply_clan_war_result(winner_clan['id'], loser_clan['id'], winner_id)
 
     update_task_progress(challenger_id, "arena_battle", "daily")
@@ -525,10 +529,14 @@ def run_clan_war_battle(challenger_id, challenger_chat_id, challenger_clan, targ
 
     treasury_gain = CLAN_WAR_STAKE * 2 + CLAN_WAR_BONUS
 
+    from config import FUSE_CHARGES_PER_LEVEL
+    level_up_txt = (f"\n\n🌀 <b>Новый уровень культивации!</b> +{levels_gained * FUSE_CHARGES_PER_LEVEL} "
+                    f"попыток улучшения карт" if levels_gained else "")
+
     res_win = (f"🏆 <b>ПОБЕДА В КЛАНОВОЙ ВОЙНЕ!</b>\n\n"
                f"Клан <b>{winner_clan['name']}</b> разгромил <b>{loser_clan['name']}</b>!\n"
                f"💰 В казну клана: +{treasury_gain}\n"
-               f"⚔️ Личная награда: +{10 + CLAN_WAR_PERSONAL_REWARD} монет, +25 рейтинга")
+               f"⚔️ Личная награда: +{10 + CLAN_WAR_PERSONAL_REWARD} монет, +25 рейтинга{level_up_txt}")
 
     res_lose = (f"💀 <b>ПОРАЖЕНИЕ В КЛАНОВОЙ ВОЙНЕ...</b>\n\n"
                 f"Клан <b>{loser_clan['name']}</b> проиграл клану <b>{winner_clan['name']}</b>.\n"
