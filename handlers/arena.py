@@ -9,7 +9,7 @@ from database import (get_user_data, get_clan_info, get_user_squad, join_queue,
                       get_clan_war_status, get_clans_for_war, start_clan_war, apply_clan_war_result,
                       get_effective_stats, check_arena_available, set_last_arena_at)
 from loader import bot
-from utils import safe_edit_message, safe_send_message
+from utils import safe_edit_message, safe_send_message, safe_delete_message
 
 
 # --- МЕНЮ АРЕНЫ ---
@@ -208,7 +208,7 @@ def show_duel_menu(message, user_id):
 def redirect_to_cards(call):
     bot.answer_callback_query(call.id)
     from handlers.cards import inventory_menu
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     call.message.text = "🗂 Мои карты"
     inventory_menu(call.message, user_id=call.from_user.id)
 

@@ -34,6 +34,21 @@ def safe_send_message(bot, chat_id, text, reply_markup=None, parse_mode=None, ow
         return None
 
 
+def safe_delete_message(bot, chat_id, message_id):
+    """Удаляет сообщение, не роняя весь остальной хендлер, если это не
+    получится — Telegram отказывает с ApiTelegramException ("message can't
+    be deleted for everyone"), например для сообщений старше ~48ч, на
+    которые игрок нажал кнопку спустя долгое время. Раньше голый
+    bot.delete_message(...) в таком случае прерывал функцию посреди
+    выполнения — код ПОСЛЕ удаления (обычно самое важное — показ нового
+    экрана) просто не запускался, и кнопка выглядела так, будто ничего
+    не делает."""
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        print(f"Error deleting message: {e}")
+
+
 def reply_match(*labels):
     """Фильтр для reply-кнопок, который срабатывает на любой из переданных
     вариантов текста — передавай и версию с эмодзи (как на самой кнопке), и

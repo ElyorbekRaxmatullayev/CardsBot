@@ -4,6 +4,7 @@ from telebot import types
 
 from database import get_required_channels
 from loader import bot
+from utils import safe_delete_message
 
 # Проверка подписки идёт через живой запрос к Telegram (getChatMember) — это
 # сетевой вызов, и без кеша он повторялся на КАЖДОЕ сообщение/нажатие в боте
@@ -77,10 +78,7 @@ def sub_check_callback(call):
         return
 
     bot.answer_callback_query(call.id, "✅ Подписка подтверждена!")
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except Exception:
-        pass
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
 
     from handlers.users import get_main_reply_markup
     txt = (f"👋 Отлично, <b>{call.from_user.first_name}</b>!\n\n"

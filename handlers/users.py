@@ -11,7 +11,7 @@ from database import (get_or_create_user, get_user_data, get_top_by_coins,
                       get_cultivation_info, get_squad_power, get_top_cultivators)
 from database import is_premium, get_clan_name, is_user_banned, update_task_progress, on_card_obtained
 from loader import bot
-from utils import safe_send_message, safe_edit_message, reply_match
+from utils import safe_send_message, safe_edit_message, safe_delete_message, reply_match
 
 
 # ─────────────────────────────────────────────
@@ -300,7 +300,7 @@ def collection_redirect(call):
     """Перенаправляет в инвентарь карт"""
     bot.answer_callback_query(call.id)
     from handlers.cards import inventory_menu
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     call.message.text = "🗂 Мои карты"
     inventory_menu(call.message, user_id=call.from_user.id)
 
@@ -314,7 +314,7 @@ def collection_redirect(call):
 def clans_redirect(call):
     bot.answer_callback_query(call.id)
     from handlers.clans import clan_main_menu
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     clan_main_menu(call.message, user_id=call.from_user.id)
 
 
@@ -322,21 +322,21 @@ def clans_redirect(call):
 def marriage_redirect(call):
     bot.answer_callback_query(call.id)
     from handlers.marriage import marriage_main_menu
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     marriage_main_menu(call.message, user_id=call.from_user.id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_farm")
 def farm_redirect(call):
     bot.answer_callback_query(call.id)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     farm_handler(call.message, user_id=call.from_user.id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_settings")
 def settings_redirect(call):
     bot.answer_callback_query(call.id)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     settings_handler(call.message, user_id=call.from_user.id)
 
 
@@ -344,14 +344,14 @@ def settings_redirect(call):
 def premium_redirect(call):
     bot.answer_callback_query(call.id)
     from handlers.shop import premium_menu_reply
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     premium_menu_reply(call.message, user_id=call.from_user.id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "menu_about")
 def about_redirect(call):
     bot.answer_callback_query(call.id)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     about_handler(call.message, user_id=call.from_user.id)
 
 

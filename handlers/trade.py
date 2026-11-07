@@ -5,7 +5,7 @@ from database import (get_user_data, get_user_inventory,
                       get_incoming_trades, get_outgoing_trades,
                       create_trade_offer, accept_trade, decline_trade)
 from loader import bot
-from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user
+from utils import safe_edit_message, safe_send_message, safe_delete_message, register_next_step_handler_for_user
 
 # Временное хранилище для выбранных карт при создании обмена
 _trade_state = {}  # user_id -> {'step': ..., 'card_id': ..., 'target_id': ...}
@@ -318,10 +318,7 @@ def trade_select_confirm(call):
 
     _trade_state[user_id] = {'target_id': target_id, 'target_name': target_name,
                              'queue': selected, 'results': []}
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except Exception:
-        pass
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     _start_next_trade_item(call.message.chat.id, user_id)
 
 

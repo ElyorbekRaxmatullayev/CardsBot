@@ -5,7 +5,7 @@ from database import (get_market_listings, list_card_on_market,
                       buy_from_market, cancel_market_listing, count_active_market_listings,
                       get_my_market_listings, get_user_inventory, get_user_data)
 from loader import bot
-from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user
+from utils import safe_edit_message, safe_send_message, safe_delete_message, register_next_step_handler_for_user
 
 # Временное состояние для листинга
 _listing_state = {}  # user_id -> {'card_id': ...}
@@ -243,10 +243,7 @@ def market_sell_confirm(call):
         return
 
     _listing_state[user_id] = {'queue': selected, 'results': []}
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except Exception:
-        pass
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     _start_next_sell_item(call.message.chat.id, user_id)
 
 

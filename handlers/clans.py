@@ -8,7 +8,7 @@ from database import get_all_clans_list, request_join_clan, get_pending_clan_req
 from database import invite_to_clan, accept_clan_invite, decline_clan_invite, find_user_by_username
 from database import withdraw_from_clan_treasury
 from loader import bot
-from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user, reply_match
+from utils import safe_edit_message, safe_send_message, safe_delete_message, register_next_step_handler_for_user, reply_match
 
 
 # --- ГЛАВНОЕ МЕНЮ КЛАНОВ (Вход) ---
@@ -157,7 +157,7 @@ def clan_list_page_cb(call):
     page = int(call.data.split(":")[1])
     
     # Чтобы не дублировать код, вызовем основную логику (нужно удалить старое сообщение и прислать новое, или отредактировать)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     clan_main_menu(call.message, user_id=call.from_user.id, page=page)
 
 
@@ -205,7 +205,7 @@ def clan_leave_do(call):
 @bot.callback_query_handler(func=lambda call: call.data == "clan_leave_cancel")
 def clan_leave_cancel(call):
     bot.answer_callback_query(call.id, "Отменено")
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
 
 
 # --- УДАЛЕНИЕ КЛАНА ---
@@ -349,7 +349,7 @@ def clan_invite_accept_cb(call):
     success, msg = accept_clan_invite(invite_id, call.from_user.id)
     bot.answer_callback_query(call.id, msg, show_alert=True)
     if success:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        safe_delete_message(bot, call.message.chat.id, call.message.message_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("clan_invite_decline:"))
@@ -358,7 +358,7 @@ def clan_invite_decline_cb(call):
     success, msg = decline_clan_invite(invite_id, call.from_user.id)
     bot.answer_callback_query(call.id, msg, show_alert=True)
     if success:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        safe_delete_message(bot, call.message.chat.id, call.message.message_id)
 
 
 # --- УПРАВЛЕНИЕ ЗАЯВКАМИ (ДЛЯ ЛИДЕРА) ---
@@ -404,7 +404,7 @@ def accept_request_cb(call):
     success, msg = accept_clan_request(req_id, leader_id)
     bot.answer_callback_query(call.id, msg, show_alert=True)
     # Возвращаемся в главное меню кланов, чтобы обновить
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     clan_main_menu(call.message, user_id=leader_id)
 
 
@@ -415,7 +415,7 @@ def reject_request_cb(call):
     success, msg = reject_clan_request(req_id, leader_id)
     bot.answer_callback_query(call.id, msg, show_alert=True)
     # Возвращаемся в главное меню кланов
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     clan_main_menu(call.message, user_id=leader_id)
 
 

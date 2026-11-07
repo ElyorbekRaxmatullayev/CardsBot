@@ -4,7 +4,7 @@ from database import (get_user_marriage, get_pending_marriage_request, get_sent_
                       propose_marriage, accept_marriage, reject_marriage, divorce, find_user_by_username,
                       get_user_data, is_user_banned, get_chat_marriages)
 from loader import bot
-from utils import safe_edit_message, safe_send_message, register_next_step_handler_for_user, reply_match
+from utils import safe_edit_message, safe_send_message, safe_delete_message, register_next_step_handler_for_user, reply_match
 
 
 @bot.message_handler(func=reply_match("❤️ Даосская пара", "Даосская пара", "❤️ Брак", "Брак"))
@@ -129,7 +129,7 @@ def marriage_accept_cb(call):
         bot.answer_callback_query(call.id, "Поздравляем со свадьбой! 🎉", show_alert=True)
     else:
         bot.answer_callback_query(call.id, msg, show_alert=True)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     marriage_main_menu(call.message, user_id=call.from_user.id)
 
 
@@ -138,7 +138,7 @@ def marriage_reject_cb(call):
     req_id = int(call.data.split(":")[1])
     success, msg = reject_marriage(req_id, call.from_user.id)
     bot.answer_callback_query(call.id, "Предложение отклонено.")
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     marriage_main_menu(call.message, user_id=call.from_user.id)
 
 
@@ -158,7 +158,7 @@ def marriage_divorce_confirm(call):
 def marriage_divorce_do(call):
     bot.answer_callback_query(call.id)
     divorce(call.from_user.id)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     bot.send_message(call.message.chat.id, "💔 Вы развелись.")
     marriage_main_menu(call.message, user_id=call.from_user.id)
 
@@ -166,5 +166,5 @@ def marriage_divorce_do(call):
 @bot.callback_query_handler(func=lambda call: call.data == "marriage_divorce_cancel")
 def marriage_divorce_cancel(call):
     bot.answer_callback_query(call.id, "Отменено")
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     marriage_main_menu(call.message, user_id=call.from_user.id)

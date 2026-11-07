@@ -15,7 +15,7 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       set_card_stars_price, grant_premium, grant_bonus_to_all_users, reset_user_account,
                       reset_all_player_cards)
 from loader import bot
-from utils import safe_edit_message, register_next_step_handler_for_user
+from utils import safe_edit_message, safe_delete_message, register_next_step_handler_for_user
 
 CARDS_PAGE_SIZE = 10
 
@@ -381,7 +381,7 @@ def adm_cards_list(call):
         # отрисована как фото-сообщение, а edit_message_text (внутри
         # safe_edit_message) не может превратить фото-сообщение в текстовое,
         # просто молча падает с ошибкой — поэтому тут удаляем и шлём заново
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        safe_delete_message(bot, call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, txt, reply_markup=markup, parse_mode="HTML")
     else:
         safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
@@ -428,7 +428,7 @@ def adm_card_view(call):
     markup.add(types.InlineKeyboardButton("🔙 К списку", callback_data=f"adm_cards:{page}"))
 
     if card.get('image_file_id'):
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        safe_delete_message(bot, call.message.chat.id, call.message.message_id)
         if card.get('media_type') == 'video':
             bot.send_video(call.message.chat.id, card['image_file_id'], caption=txt, reply_markup=markup, parse_mode="HTML")
         else:
@@ -821,7 +821,7 @@ def adm_evt_skip(call):
     if not is_admin(call.from_user.id):
         return
     bot.answer_callback_query(call.id, "Ок, без задания")
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_evt_metric:"))
@@ -831,7 +831,7 @@ def adm_evt_metric(call):
     bot.answer_callback_query(call.id)
     _, event_id, metric = call.data.split(":")
     label = next((lbl for key, lbl in EVENT_TASK_METRICS if key == metric), metric)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     msg = bot.send_message(call.message.chat.id,
                            f"Выбрано: {label}\n\nВведи <b>цель</b> (число, например 10):", parse_mode="HTML")
     register_next_step_handler_for_user(bot, msg, call.from_user.id, _event_task_step_target,
@@ -1118,7 +1118,7 @@ def adm_admin_role_pick(call):
     role = call.data.split(":")[1]
     add_admin(target_id, role=role, added_by=call.from_user.id)
     bot.answer_callback_query(call.id, f"✅ Назначен как {_role_label(role)}", show_alert=True)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     admin_start(call.message, user_id=call.from_user.id)
 
 
@@ -1247,7 +1247,7 @@ def _channel_step_chatid(message, data):
 def adm_channel_mode_cancel(call):
     _pending_channel.pop(call.from_user.id, None)
     bot.answer_callback_query(call.id, "Отменено")
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     admin_start(call.message, user_id=call.from_user.id)
 
 
@@ -1262,7 +1262,7 @@ def adm_channel_save(call):
     is_mandatory = call.data.split(":")[1] == 'mandatory'
     add_required_channel(data['title'], data['url'], data['chat_id'], is_mandatory)
     bot.answer_callback_query(call.id, "✅ Канал добавлен!", show_alert=True)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     admin_start(call.message, user_id=call.from_user.id)
 
 
@@ -1329,7 +1329,7 @@ def _broadcast_step_content(message):
 def adm_broadcast_cancel(call):
     bot.answer_callback_query(call.id, "Отменено")
     _broadcast_pending.pop(call.from_user.id, None)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "adm_broadcast_confirm")
@@ -1431,7 +1431,7 @@ def _bonus_all_step(message):
 def adm_bonus_all_cancel(call):
     bot.answer_callback_query(call.id, "Отменено")
     _bonus_all_pending.pop(call.from_user.id, None)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "adm_bonus_all_confirm")

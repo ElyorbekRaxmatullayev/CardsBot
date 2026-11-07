@@ -7,7 +7,7 @@ from database import get_all_cards, get_user_data, add_card_to_user, update_last
     get_user_squad, toggle_squad_member, fuse_card_with_charge, is_premium, is_user_banned, update_task_progress, \
     on_card_obtained, consume_free_draw, get_effective_stats, \
     fuse_card_max_with_charges, disenchant_card_duplicates, draw_card_with_fragments
-from utils import reply_match, safe_send_message, safe_edit_message, _msg_owners
+from utils import reply_match, safe_send_message, safe_edit_message, safe_delete_message, _msg_owners
 
 
 def drop_random_card_logic():
@@ -198,7 +198,7 @@ def inventory_nav(call):
     action = parts[0]
 
     if action == "inv_back_main":
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        safe_delete_message(bot, call.message.chat.id, call.message.message_id)
         inventory_menu(call.message, user_id=call.from_user.id)
         return
 
@@ -305,7 +305,7 @@ def inventory_nav(call):
             # удаляется и шлётся новое, с НОВЫМ message_id, поэтому владельца
             # нужно зарегистрировать заново, иначе защита кнопок (см.
             # ButtonProtectionMiddleware) перестаёт действовать на это окно.
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            safe_delete_message(bot, call.message.chat.id, call.message.message_id)
             if is_video:
                 sent = bot.send_video(call.message.chat.id, card['image_file_id'], caption=caption, reply_markup=markup,
                                       parse_mode="HTML")
@@ -320,10 +320,7 @@ def inventory_nav(call):
         # просто молча не открывался, без единой подсказки, что пошло не так.
         # Теперь логируем и гарантированно показываем карту хотя бы текстом.
         print(f"Error showing card in inventory (card_id={card.get('id')}): {e}")
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception:
-            pass
+        safe_delete_message(bot, call.message.chat.id, call.message.message_id)
         safe_send_message(bot, call.message.chat.id, caption, reply_markup=markup, parse_mode="HTML",
                           owner_id=call.from_user.id)
 

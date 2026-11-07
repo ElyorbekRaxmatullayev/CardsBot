@@ -3,7 +3,7 @@ from telebot import types
 from config import PACK_CONFIG, DROP_COOLDOWN, DROP_COOLDOWN_PREMIUM, STARS_VIP_PACKAGES, FARM_PREMIUM_BONUS_PERCENT
 from database import get_user_data, update_coins, update_gems, add_pack_to_user, is_premium, update_task_progress
 from loader import bot, supabase
-from utils import safe_edit_message, safe_send_message, reply_match, register_next_step_handler_for_user
+from utils import safe_edit_message, safe_send_message, safe_delete_message, reply_match, register_next_step_handler_for_user
 
 _pack_buy_pending = {}  # user_id -> pack_type, ждём ввода количества
 
@@ -200,5 +200,5 @@ def toggle_autorenew(call):
     supabase.table("users").update({"premium_auto_renew": new_val}).eq("telegram_id", user_id).execute()
     status = "✅ включено" if new_val else "❌ выключено"
     bot.answer_callback_query(call.id, f"Автопродление {status}", show_alert=True)
-    bot.delete_message(call.message.chat.id, call.message.message_id)
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     premium_menu_reply(call.message, user_id=user_id)
