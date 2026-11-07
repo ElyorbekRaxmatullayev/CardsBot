@@ -7,7 +7,7 @@ from config import BATTLE_WEIGHTS, EVENT_TEXTS, CLAN_WAR_STAKE, CLAN_WAR_BONUS, 
 from database import (get_user_data, get_clan_info, get_user_squad, join_queue,
                       leave_queue, find_opponent, update_battle_stats, update_task_progress,
                       get_clan_war_status, get_clans_for_war, start_clan_war, apply_clan_war_result,
-                      get_effective_stats)
+                      get_effective_stats, check_arena_available, set_last_arena_at)
 from loader import bot
 from utils import safe_edit_message, safe_send_message
 
@@ -184,14 +184,20 @@ def show_duel_menu(message, user_id):
     user = get_user_data(user_id)
     squad = get_user_squad(user_id)
     rating = user.get('rating', 1000)
+    available, seconds_left = check_arena_available(user_id)
+    cooldown_txt = "✅ Готовы к бою" if available else f"⏳ Отдых ещё {_seconds_to_hm(seconds_left)}"
 
     txt = (f"🏟 <b>Битва бессмертных: Дуэли</b>\n\n"
            f"🏆 Твой рейтинг: {rating}\n"
-           f"🛡 Войнов в отряде: {len(squad)}/5\n\n"
+           f"🛡 Войнов в отряде: {len(squad)}/5\n"
+           f"{cooldown_txt}\n\n"
            f"Готов сразиться за славу?")
 
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("⚔️ Найти противника", callback_data="arena_find"))
+    if available:
+        markup.add(types.InlineKeyboardButton("⚔️ Найти противника", callback_data="arena_find"))
+    else:
+        markup.add(types.InlineKeyboardButton(f"⏳ Отдых ещё {_seconds_to_hm(seconds_left)}", callback_data="ignore"))
     markup.add(types.InlineKeyboardButton("🛡 Мой отряд (Карты)", callback_data="arena_my_squad"))
     markup.add(types.InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_game_menu"))
 
@@ -213,6 +219,11 @@ def redirect_to_cards(call):
 def start_search(call):
     user_id = call.from_user.id
     my_chat_id = call.message.chat.id
+
+    available, seconds_left = check_arena_available(user_id)
+    if not available:
+        bot.answer_callback_query(call.id, f"⏳ Отдых ещё {_seconds_to_hm(seconds_left)}", show_alert=True)
+        return
 
     squad = get_user_squad(user_id)
     if not squad:
@@ -381,6 +392,10 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
         enemy_name_l = p2_user['first_name']
 
     levels_gained = update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
+
+    # Кулдаун на арену — обоим участникам, после ЛЮБОГО исхода боя
+    set_last_arena_at(player1_id)
+    set_last_arena_at(player2_id)
 
     # Обновляем счётчики заданий: "провести бой" — обоим, "выиграть бой" — только победителю
     update_task_progress(player1_id, "arena_battle", "daily")

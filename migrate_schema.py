@@ -49,6 +49,7 @@ EXTRA_COLUMNS = {
         ("cultivation_xp", "INTEGER DEFAULT 0"),
         ("fuse_charges", "INTEGER DEFAULT 0"),
         ("fragments", "INTEGER DEFAULT 0"),
+        ("last_arena_at", "TIMESTAMP"),
     ],
     "marriages": [
         ("married_at", "TIMESTAMP"),

@@ -1543,6 +1543,35 @@ def disable_premium_auto_renew(user_id):
 
 # --- ФАРМ МОНЕТ ---
 
+def check_arena_available(user_id):
+    """Проверяет кулдаун боя на арене — ARENA_COOLDOWN_HOURS (у Premium —
+    ARENA_COOLDOWN_HOURS_PREMIUM). Возвращает (available: bool, seconds_left: int)."""
+    from config import ARENA_COOLDOWN_HOURS, ARENA_COOLDOWN_HOURS_PREMIUM
+    user = get_user_data(user_id)
+    if not user:
+        return False, 0
+    cooldown_hours = ARENA_COOLDOWN_HOURS_PREMIUM if is_premium(user) else ARENA_COOLDOWN_HOURS
+    last = user.get('last_arena_at')
+    if not last:
+        return True, 0
+    now = datetime.now(timezone.utc)
+    last_dt = datetime.fromisoformat(last.replace('Z', '+00:00'))
+    diff = now - last_dt
+    cooldown = timedelta(hours=cooldown_hours)
+    if diff >= cooldown:
+        return True, 0
+    seconds_left = int((cooldown - diff).total_seconds())
+    return False, seconds_left
+
+
+def set_last_arena_at(user_id):
+    """Ставит метку последнего боя на арене — вызывается для ОБОИХ
+    участников сразу после боя, чтобы запустить кулдаун."""
+    supabase.table("users").update(
+        {"last_arena_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("telegram_id", user_id).execute()
+
+
 def check_farm_available(user_id):
     """Проверяет, доступен ли фарм монет (кулдаун 4 часа). Возвращает (available: bool, seconds_left: int)"""
     from config import FARM_COOLDOWN_HOURS
