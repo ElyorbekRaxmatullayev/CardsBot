@@ -448,7 +448,12 @@ def _apply_cultivation_xp_update(update_dict, user_row, xp_amount):
 
 
 def update_battle_stats(winner_id, loser_id, w_dmg=0, l_dmg=0):
-    from config import CULTIVATION_XP_WIN, CULTIVATION_XP_LOSS
+    import random
+    from config import CULTIVATION_XP_WIN_MIN, CULTIVATION_XP_WIN_MAX, CULTIVATION_XP_LOSS
+
+    # Опыт за победу — случайный в диапазоне, чтобы прогресс по стадиям
+    # зависел от удачи, а не был предсказуемой капельницей по 10-50 опыта
+    xp_won = random.randint(CULTIVATION_XP_WIN_MIN, CULTIVATION_XP_WIN_MAX)
 
     # Победитель
     w = supabase.table("users").select(
@@ -462,7 +467,7 @@ def update_battle_stats(winner_id, loser_id, w_dmg=0, l_dmg=0):
         "battles_total": w['battles_total'] + 1,
         "total_damage_dealt": w_dmg_prev + w_dmg,
     }
-    w_levels_gained = _apply_cultivation_xp_update(w_update, w, CULTIVATION_XP_WIN)
+    w_levels_gained = _apply_cultivation_xp_update(w_update, w, xp_won)
     supabase.table("users").update(w_update).eq("telegram_id", winner_id).execute()
 
     # Проигравший
@@ -481,7 +486,7 @@ def update_battle_stats(winner_id, loser_id, w_dmg=0, l_dmg=0):
     _apply_cultivation_xp_update(l_update, l, CULTIVATION_XP_LOSS)
     supabase.table("users").update(l_update).eq("telegram_id", loser_id).execute()
 
-    return w_levels_gained
+    return w_levels_gained, xp_won
 
 
 

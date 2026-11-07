@@ -391,7 +391,7 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
         enemy_name_w = p1_user['first_name']
         enemy_name_l = p2_user['first_name']
 
-    levels_gained = update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
+    levels_gained, xp_won = update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
 
     # Кулдаун на арену — обоим участникам, после ЛЮБОГО исхода боя
     set_last_arena_at(player1_id)
@@ -410,7 +410,8 @@ def start_battle_animated(player1_id, player1_chat_id, player2_id, player2_chat_
                f"Противник: <b>{enemy_name_w}</b> повержен!\n"
                f"Ваше здоровье: {w_hp_left}\n"
                f"Урон нанесен: {w_dmg}\n\n"
-               f"💰 Награда: +10 монет, +25 рейтинга{level_up_txt}")
+               f"💰 Награда: +10 монет, +25 рейтинга\n"
+               f"🧘 +{xp_won} опыта культивации{level_up_txt}")
 
     res_lose = (f"💀 <b>ПОРАЖЕНИЕ...</b>\n\n"
                 f"Противник: <b>{enemy_name_l}</b> оказался сильнее.\n"
@@ -535,7 +536,7 @@ def run_clan_war_battle(challenger_id, challenger_chat_id, challenger_clan, targ
         winner_clan, loser_clan = target_clan, challenger_clan
         w_dmg, l_dmg = p2_dmg_total, p1_dmg_total
 
-    levels_gained = update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
+    levels_gained, xp_won = update_battle_stats(winner_id, loser_id, w_dmg=w_dmg, l_dmg=l_dmg)
     apply_clan_war_result(winner_clan['id'], loser_clan['id'], winner_id)
 
     update_task_progress(challenger_id, "arena_battle", "daily")
@@ -551,7 +552,8 @@ def run_clan_war_battle(challenger_id, challenger_chat_id, challenger_clan, targ
     res_win = (f"🏆 <b>ПОБЕДА В КЛАНОВОЙ ВОЙНЕ!</b>\n\n"
                f"Клан <b>{winner_clan['name']}</b> разгромил <b>{loser_clan['name']}</b>!\n"
                f"💰 В казну клана: +{treasury_gain}\n"
-               f"⚔️ Личная награда: +{10 + CLAN_WAR_PERSONAL_REWARD} монет, +25 рейтинга{level_up_txt}")
+               f"⚔️ Личная награда: +{10 + CLAN_WAR_PERSONAL_REWARD} монет, +25 рейтинга\n"
+               f"🧘 +{xp_won} опыта культивации{level_up_txt}")
 
     res_lose = (f"💀 <b>ПОРАЖЕНИЕ В КЛАНОВОЙ ВОЙНЕ...</b>\n\n"
                 f"Клан <b>{loser_clan['name']}</b> проиграл клану <b>{winner_clan['name']}</b>.\n"
