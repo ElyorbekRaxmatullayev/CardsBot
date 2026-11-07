@@ -7,7 +7,7 @@ from telebot import types
 from config import RARITY_ORDER, RARITY_CONFIG
 from database import (add_new_card_to_db, get_user_data, update_coins, update_gems, get_all_users_count,
                       update_card, delete_card, get_cards_paginated, count_card_owners, add_card_to_user, add_cards_to_user,
-                      create_event, end_event, get_events_admin,
+                      create_event, end_event, get_events_admin, create_event_task,
                       search_users, set_user_banned, get_public_profile,
                       is_admin, is_head_admin, get_admin_role, get_admins_list, add_admin, remove_admin,
                       get_required_channels, add_required_channel, delete_required_channel,
@@ -18,6 +18,24 @@ from loader import bot
 from utils import safe_edit_message, register_next_step_handler_for_user
 
 CARDS_PAGE_SIZE = 10
+
+# Задание испытания (этап E ТЗ) даёт награду за одну из уже
+# инструментированных "метрик" прогресса (см. update_task_progress по
+# всему коду) — "N" в подписи подставляется введённой админом целью.
+EVENT_TASK_METRICS = [
+    ("get_card", "🎴 Получить N карт"),
+    ("new_card", "🔥 Получить N новых карт"),
+    ("open_pack", "📦 Открыть N паков"),
+    ("arena_battle", "⚔️ Провести N боёв"),
+    ("battles_5", "🏆 Выиграть N боёв"),
+    ("get_rare", "🔵 Получить N карт Rare"),
+    ("get_epic", "🟣 Получить N карт Epic"),
+    ("get_legendary", "🟡 Получить N карт Legendary"),
+    ("get_mythic", "🔴 Получить N карт Mythic"),
+    ("fuse_card", "🔀 Улучшить карту N раз"),
+    ("spend_coins", "💰 Потратить N монет"),
+    ("trade_complete", "🔁 Совершить N обменов"),
+]
 
 
 def _adm_back_markup():
@@ -79,7 +97,7 @@ def admin_start(message, user_id=None):
         row.insert(0, types.InlineKeyboardButton("👑 Админы", callback_data="adm_admins"))
     markup.row(*row)
     if is_head_admin(user_id):
-        markup.row(types.InlineKeyboardButton("🔄 Новый сезон (сброс карт у ВСЕХ)", callback_data="adm_season_reset_start"))
+        markup.row(types.InlineKeyboardButton("🔄 Новый сезон (сброс карт и уровней у ВСЕХ)", callback_data="adm_season_reset_start"))
 
     role = get_admin_role(user_id)
     role_txt = "👑 Гл. Администратор" if role == 'head' else "🛡 Админ"
@@ -783,8 +801,90 @@ def _event_step_days(message, data):
         msg = bot.send_message(message.chat.id, "❌ Введи целое число дней (например: 7):")
         register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_step_days, data)
         return
-    create_event(data['name'], data['description'], days)
+
+    event_id = create_event(data['name'], data['description'], days)
     bot.send_message(message.chat.id, f"✅ Испытание «<b>{data['name']}</b>» запущено на {days} дн.!",
+                     parse_mode="HTML")
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for metric, label in EVENT_TASK_METRICS:
+        markup.add(types.InlineKeyboardButton(label, callback_data=f"adm_evt_metric:{event_id}:{metric}"))
+    markup.add(types.InlineKeyboardButton("⏭ Без задания/награды", callback_data=f"adm_evt_skip:{event_id}"))
+    bot.send_message(message.chat.id,
+                     "🎁 <b>Добавить задание с наградой</b> (монеты/гемы) к этому испытанию?\n"
+                     "Выбери, за что давать награду, или пропусти:",
+                     reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_evt_skip:"))
+def adm_evt_skip(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id, "Ок, без задания")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_evt_metric:"))
+def adm_evt_metric(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    _, event_id, metric = call.data.split(":")
+    label = next((lbl for key, lbl in EVENT_TASK_METRICS if key == metric), metric)
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    msg = bot.send_message(call.message.chat.id,
+                           f"Выбрано: {label}\n\nВведи <b>цель</b> (число, например 10):", parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _event_task_step_target,
+                                        {"event_id": int(event_id), "task_id": metric, "label": label})
+
+
+def _event_task_step_target(message, data):
+    try:
+        target = int(message.text.strip())
+        if target < 1:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое число не меньше 1:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_task_step_target, data)
+        return
+    data['target'] = target
+    msg = bot.send_message(message.chat.id, "💰 Награда монетами (число, 0 — без монет):")
+    register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_task_step_coins, data)
+
+
+def _event_task_step_coins(message, data):
+    try:
+        coins = int(message.text.strip())
+        if coins < 0:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое число ≥ 0:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_task_step_coins, data)
+        return
+    data['reward_coins'] = coins
+    msg = bot.send_message(message.chat.id, "💎 Награда гемами (число, 0 — без гемов):")
+    register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_task_step_gems, data)
+
+
+def _event_task_step_gems(message, data):
+    try:
+        gems = int(message.text.strip())
+        if gems < 0:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое число ≥ 0:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _event_task_step_gems, data)
+        return
+
+    task_name = f"{data['label'].replace('N', str(data['target']))}"
+    create_event_task(data['event_id'], data['task_id'], task_name, data['target'], data['reward_coins'], gems)
+
+    reward_parts = []
+    if data['reward_coins']: reward_parts.append(f"💰{data['reward_coins']}")
+    if gems: reward_parts.append(f"💎{gems}")
+    reward_txt = " + ".join(reward_parts) if reward_parts else "без награды"
+    bot.send_message(message.chat.id,
+                     f"✅ Задание добавлено: <b>{task_name}</b>\nНаграда: {reward_txt}",
                      reply_markup=_adm_back_markup(), parse_mode="HTML")
 
 
@@ -1393,11 +1493,11 @@ def adm_season_reset_start(call):
     bot.answer_callback_query(call.id)
     users_count = get_all_users_count()
     msg = bot.send_message(call.message.chat.id,
-                           f"⚠️⚠️⚠️ <b>НОВЫЙ СЕЗОН — СБРОС КАРТ У ВСЕХ ИГРОКОВ</b>\n\n"
-                           f"Это НЕОБРАТИМО удалит ВСЕ карты и слоты отряда у "
-                           f"<b>{users_count}</b> игроков разом.\n\n"
+                           f"⚠️⚠️⚠️ <b>НОВЫЙ СЕЗОН — СБРОС КАРТ И УРОВНЕЙ У ВСЕХ ИГРОКОВ</b>\n\n"
+                           f"Это НЕОБРАТИМО удалит ВСЕ карты и слоты отряда, а также обнулит "
+                           f"уровень/стадию культивации у <b>{users_count}</b> игроков разом.\n\n"
                            f"НЕ трогает: монеты, Gems, фрагменты, попытки улучшения, "
-                           f"культивацию (уровень/опыт), кланы, браки, задания, паки.\n\n"
+                           f"кланы, браки, задания, паки.\n\n"
                            f"Чтобы подтвердить, отправь точную фразу:\n"
                            f"<code>{SEASON_RESET_CONFIRM_PHRASE}</code>\n\n"
                            f"Любое другое сообщение — отмена.",
@@ -1412,9 +1512,10 @@ def _season_reset_confirm_step(message):
         bot.send_message(message.chat.id, "Отменено.", reply_markup=_adm_back_markup())
         return
 
-    cards_deleted, squads_deleted = reset_all_player_cards()
+    cards_deleted, squads_deleted, players_leveled_reset = reset_all_player_cards()
     bot.send_message(message.chat.id,
                      f"✅ <b>Новый сезон начался!</b>\n\n"
                      f"Удалено карт: {cards_deleted}\n"
-                     f"Очищено слотов отряда: {squads_deleted}",
+                     f"Очищено слотов отряда: {squads_deleted}\n"
+                     f"Сброшено уровней культивации: {players_leveled_reset}",
                      reply_markup=_adm_back_markup(), parse_mode="HTML")

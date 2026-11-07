@@ -162,6 +162,20 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 13b. EVENT_TASKS (доп. задание испытания с произвольной наградой от
+-- админа — v1: ровно одно задание на событие, "метрика" (task_id) — одна
+-- из уже инструментированных через update_task_progress по всему коду)
+CREATE TABLE IF NOT EXISTS event_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    target INTEGER NOT NULL,
+    reward_coins INTEGER DEFAULT 0,
+    reward_gems INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 14. ADMINS
 CREATE TABLE IF NOT EXISTS admins (
     telegram_id INTEGER PRIMARY KEY,

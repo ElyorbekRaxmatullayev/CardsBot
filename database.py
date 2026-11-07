@@ -596,11 +596,11 @@ def get_user_task_progress(user_id, period="daily"):
     return result
 
 
-def update_task_progress(user_id, task_id, period, increment=1):
-    """Обновляет прогресс задания"""
-    # Auto-reset old tasks before updating
+def _update_single_task_progress(user_id, task_id, period, increment=1):
+    # Auto-reset old tasks before updating (no-op for "event:*" периодов —
+    # get_user_task_progress сбрасывает только daily/weekly)
     get_user_task_progress(user_id, period)
-    
+
     existing = supabase.table("user_tasks").select("*").eq("user_id", user_id).eq("task_id", task_id).eq("period", period).execute()
     now_str = datetime.now(timezone.utc).isoformat()
     if existing.data:
@@ -613,6 +613,19 @@ def update_task_progress(user_id, task_id, period, increment=1):
         supabase.table("user_tasks").insert({
             "user_id": user_id, "task_id": task_id, "period": period, "progress": increment, "claimed": False, "updated_at": now_str
         }).execute()
+
+
+def update_task_progress(user_id, task_id, period, increment=1):
+    """Обновляет прогресс обычного (daily/weekly) задания, и заодно —
+    прогресс по заданиям АКТИВНЫХ испытаний (events) с той же "метрикой"
+    task_id, если такие есть (этап E ТЗ: доп. задания ивентов с
+    произвольной наградой от админа). Переиспользует ту же таблицу
+    user_tasks с period="event:{event_id}" — она не сбрасывается
+    daily/weekly-логикой в get_user_task_progress."""
+    _update_single_task_progress(user_id, task_id, period, increment)
+
+    for event_id in get_active_event_ids_by_metric(task_id):
+        _update_single_task_progress(user_id, task_id, f"event:{event_id}", increment)
 
 
 def claim_task_reward(user_id, task_id, period):
@@ -1433,6 +1446,52 @@ def get_events_admin(limit=10):
     return res.data or []
 
 
+# --- ЗАДАНИЯ ИСПЫТАНИЙ (EVENT_TASKS, этап E ТЗ) ---
+# v1: ровно одно задание на событие, с произвольными (введёнными админом)
+# целью и наградой — "метрика" прогресса выбирается из уже
+# инструментированных через update_task_progress типов по всему коду
+# (open_pack, arena_battle, get_rare и т.д.), чтобы не дублировать логику
+# подсчёта для каждого нового задания.
+
+def create_event_task(event_id, task_id, name, target, reward_coins, reward_gems):
+    supabase.table("event_tasks").insert({
+        "event_id": event_id, "task_id": task_id, "name": name,
+        "target": target, "reward_coins": reward_coins, "reward_gems": reward_gems,
+    }).execute()
+
+
+def get_event_task(event_id):
+    """Задание конкретного испытания, если оно есть (v1 — максимум одно)."""
+    res = supabase.table("event_tasks").select("*").eq("event_id", event_id).limit(1).execute()
+    return res.data[0] if res.data else None
+
+
+def get_active_event_ids_by_metric(metric):
+    """ID активных (ещё не завершённых) событий, у которых задание использует
+    такую же "метрику" task_id, что и только что произошедшее действие."""
+    active_ids = {e['id'] for e in get_active_events()}
+    if not active_ids:
+        return []
+    res = supabase.table("event_tasks").select("event_id").eq("task_id", metric).execute()
+    return [row['event_id'] for row in (res.data or []) if row['event_id'] in active_ids]
+
+
+def get_event_task_progress(user_id, event_id, task_id):
+    """Прогресс игрока по заданию конкретного испытания."""
+    res = supabase.table("user_tasks").select("*").eq("user_id", user_id).eq(
+        "task_id", task_id).eq("period", f"event:{event_id}").execute()
+    if not res.data:
+        return {"progress": 0, "claimed": False}
+    row = res.data[0]
+    return {"progress": row.get('progress', 0), "claimed": row.get('claimed', False)}
+
+
+def claim_event_task_reward(user_id, event_id, task_id):
+    """Забирает награду задания испытания — тот же атомарный клейм, что и
+    у обычных daily/weekly заданий (claim_task_reward), с period="event:{id}"."""
+    return claim_task_reward(user_id, task_id, f"event:{event_id}")
+
+
 # --- АДМИНКА: ИГРОКИ И БАН ---
 
 def search_users(query):
@@ -1767,8 +1826,9 @@ def find_user_by_username(username):
 def reset_user_account(telegram_id):
     """Полный сброс аккаунта игрока до состояния нового: валюта, карты,
     паки, отряд, клан, брак, задания/достижения, активные обмены и лоты на
-    площадке — всё удаляется/обнуляется, как будто только что
-    зарегистрировался. НЕ трогает: telegram_id/username/first_name,
+    площадке, культивация (уровень/опыт), попытки улучшения и фрагменты —
+    всё удаляется/обнуляется, как будто только что зарегистрировался.
+    НЕ трогает: telegram_id/username/first_name,
     referrer_id (история — кто пригласил), бан-статус и star_payments
     (платежи реальными деньгами — это не игровой прогресс, а финансовая
     запись). Если игрок — лидер клана, клан НЕ удаляется и не трогается
@@ -1820,22 +1880,29 @@ def reset_user_account(telegram_id):
         "last_clan_withdraw": None,
         "free_draws_remaining": 5,
         "premium_bonus_claimed": 0,
+        "cultivation_xp": 0,
+        "fuse_charges": 0,
+        "fragments": 0,
+        "last_arena_at": None,
     }).eq("telegram_id", telegram_id).execute()
 
     return summary
 
 
 def reset_all_player_cards():
-    """АДМИН, этап D п.3 ТЗ: "новый сезон" — обнуляет карты ВСЕХ игроков
-    разом. Удаляет ВСЕ строки user_cards и user_squads (слоты отряда всё
-    равно ссылались бы на карты, которых больше нет). НЕ трогает: монеты,
-    Gems, фрагменты, попытки улучшения, культивацию (уровень/опыт), кланы,
-    браки, задания/достижения, паки, маркет — "всё остальное как есть".
-    У кого накоплены фрагменты — быстрее проскочит начало сезона заново.
-    Необратимо. Возвращает (cards_deleted, squads_deleted)."""
+    """АДМИН, этап D п.3 ТЗ + доп. просьба: "новый сезон" — обнуляет карты
+    И уровни культивации ВСЕХ игроков разом. Удаляет ВСЕ строки user_cards
+    и user_squads (слоты отряда всё равно ссылались бы на карты, которых
+    больше нет) и обнуляет cultivation_xp (уровень и стадия вычисляются из
+    него, поэтому обнуление xp сбрасывает и то, и другое). НЕ трогает:
+    монеты, Gems, фрагменты, попытки улучшения (fuse_charges), кланы, браки,
+    задания/достижения, паки, маркет — "всё остальное как есть". У кого
+    накоплены фрагменты — быстрее проскочит начало сезона заново.
+    Необратимо. Возвращает (cards_deleted, squads_deleted, players_leveled_reset)."""
     cards_res = supabase.table("user_cards").delete().execute()
     squads_res = supabase.table("user_squads").delete().execute()
-    return cards_res.count or 0, squads_res.count or 0
+    xp_res = supabase.table("users").update({"cultivation_xp": 0}).execute()
+    return cards_res.count or 0, squads_res.count or 0, xp_res.count or 0
 
 
 # --- ВСЕ КЛАНЫ ---

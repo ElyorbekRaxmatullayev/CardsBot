@@ -1,9 +1,15 @@
 from telebot import types
 
-from database import get_active_events
+from database import get_active_events, get_event_task, get_event_task_progress, claim_event_task_reward, \
+    update_coins, update_gems
 from loader import bot
 from utils import safe_edit_message
 from datetime import datetime, timezone
+
+
+def _progress_bar(current, target, length=8):
+    filled = min(int(current / max(target, 1) * length), length)
+    return "█" * filled + "░" * (length - filled)
 
 
 def format_event_time_left(end_at_str):
@@ -79,7 +85,50 @@ def event_detail(call):
            f"• Особые шаги пути культивации 🎯")
 
     markup = types.InlineKeyboardMarkup()
+
+    # Задание испытания с наградой (этап E ТЗ), если админ его добавил
+    task = get_event_task(event['id'])
+    if task:
+        prog = get_event_task_progress(call.from_user.id, event['id'], task['task_id'])
+        current, claimed = prog['progress'], prog['claimed']
+        target = task['target']
+        bar = _progress_bar(current, target)
+        reward_parts = []
+        if task['reward_coins']: reward_parts.append(f"💰{task['reward_coins']}")
+        if task['reward_gems']: reward_parts.append(f"💎{task['reward_gems']}")
+        reward_str = " + ".join(reward_parts) if reward_parts else "—"
+
+        txt += (f"\n\n➖➖➖➖➖➖➖➖\n"
+               f"🎯 <b>Задание:</b> {task['name']}\n"
+               f"[{bar}] {min(current, target)}/{target}  →  {reward_str}")
+        if claimed:
+            txt += "\n✅ Награда получена"
+        elif current >= target:
+            markup.add(types.InlineKeyboardButton("🎁 Получить награду", callback_data=f"event_claim:{event['id']}"))
+
     markup.add(types.InlineKeyboardButton("📦 Открыть пак испытания", callback_data="pack_view:event"))
     markup.add(types.InlineKeyboardButton("🔙 К испытаниям", callback_data="menu_events"))
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
                       txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("event_claim:"))
+def event_claim(call):
+    event_id = int(call.data.split(":")[1])
+    task = get_event_task(event_id)
+    if not task:
+        bot.answer_callback_query(call.id, "Задание не найдено", show_alert=True)
+        return
+
+    if not claim_event_task_reward(call.from_user.id, event_id, task['task_id']):
+        bot.answer_callback_query(call.id, "Награда уже получена или задание ещё не выполнено", show_alert=True)
+        return
+
+    if task['reward_coins']:
+        update_coins(call.from_user.id, task['reward_coins'])
+    if task['reward_gems']:
+        update_gems(call.from_user.id, task['reward_gems'])
+
+    bot.answer_callback_query(call.id, "🎉 Награда получена!", show_alert=True)
+    call.data = f"event_detail:{event_id}"
+    event_detail(call)
