@@ -160,6 +160,7 @@ def game_menu_handler(message):
     safe_send_message(bot, message.chat.id, txt, reply_markup=get_game_inline_markup(), parse_mode="HTML", owner_id=message.from_user.id)
 
 
+@bot.message_handler(commands=['profile'])
 @bot.message_handler(func=reply_match("👤 Профиль", "Профиль"))
 def profile_handler(message, user_id=None):
     user_id = user_id or message.from_user.id

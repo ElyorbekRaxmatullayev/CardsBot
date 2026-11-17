@@ -1214,6 +1214,60 @@ def draw_card_with_fragments(user_id):
     return True, card, is_dup, count
 
 
+def draw_cards_with_fragments_bulk(user_id, draws):
+    """Тратит FRAGMENTS_PER_DRAW * draws фрагментов на `draws` случайных
+    карт разом (по просьбе — чтобы не жать кнопку по одной). Считает дропы
+    в памяти и пишет одним запросом на уникальную карту — тот же приём, что
+    и в "Открыть всё" для паков, иначе много карт разом было бы очень
+    медленно. Возвращает (success, rarity_counts_or_error_message, total_cards)."""
+    import random
+    from config import FRAGMENTS_PER_DRAW, RARITY_CONFIG
+
+    if draws < 1:
+        return False, "Количество должно быть не меньше 1", 0
+
+    user = get_user_data(user_id)
+    if not user:
+        return False, "Ошибка", 0
+    fragments = user.get('fragments') or 0
+    total_cost = FRAGMENTS_PER_DRAW * draws
+    if fragments < total_cost:
+        return False, f"Нужно {total_cost} фрагментов (у вас {fragments})", 0
+
+    claim = supabase.table("users").update({"fragments": fragments - total_cost}).eq(
+        "telegram_id", user_id).eq("fragments", fragments).execute()
+    if not claim.count:
+        return False, "Не удалось — попробуйте ещё раз", 0
+
+    cards = get_all_cards()
+    if not cards:
+        supabase.table("users").update({"fragments": fragments}).eq("telegram_id", user_id).execute()
+        return False, "Карты не найдены", 0
+    population, weights = [], []
+    for c in cards:
+        population.append(c)
+        weights.append(RARITY_CONFIG.get(c['rarity'], {}).get('chance', 1))
+
+    drop_counts = {}
+    cards_by_id = {}
+    for _ in range(draws):
+        card = random.choices(population, weights=weights, k=1)[0]
+        drop_counts[card['id']] = drop_counts.get(card['id'], 0) + 1
+        cards_by_id[card['id']] = card
+
+    rarity_counts = {}
+    new_card_count = 0
+    for card_id, amount in drop_counts.items():
+        card = cards_by_id[card_id]
+        is_new, _ = add_cards_to_user(user_id, card_id, amount)
+        if is_new:
+            new_card_count += 1
+        rarity_counts[card['rarity']] = rarity_counts.get(card['rarity'], 0) + amount
+
+    on_cards_obtained_bulk(user_id, rarity_counts, new_card_count)
+    return True, rarity_counts, draws
+
+
 # --- КЛАН: ВЫХОД И ВСТУПЛЕНИЕ ---
 
 def leave_clan(user_id):

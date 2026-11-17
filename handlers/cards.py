@@ -6,8 +6,9 @@ from config import RARITY_CONFIG, RARITY_ORDER, DROP_COOLDOWN, DROP_COOLDOWN_PRE
 from database import get_all_cards, get_user_data, add_card_to_user, update_last_drop, get_user_inventory, \
     get_user_squad, toggle_squad_member, fuse_card_with_charge, is_premium, is_user_banned, update_task_progress, \
     on_card_obtained, consume_free_draw, get_effective_stats, \
-    fuse_card_max_with_charges, disenchant_card_duplicates, draw_card_with_fragments
-from utils import reply_match, safe_send_message, safe_edit_message, safe_delete_message, _msg_owners
+    fuse_card_max_with_charges, disenchant_card_duplicates, draw_cards_with_fragments_bulk
+from utils import reply_match, safe_send_message, safe_edit_message, safe_delete_message, \
+    register_next_step_handler_for_user, _msg_owners
 
 
 def drop_random_card_logic():
@@ -155,9 +156,11 @@ def inventory_menu(message, user_id=None):
 @bot.callback_query_handler(func=lambda call: call.data == "frags_menu")
 def frags_menu(call):
     """Этап D п.2 ТЗ — фрагменты от переработки дублей карт, FRAGMENTS_PER_DRAW
-    штук конвертируются в 1 случайную карту."""
+    штук конвертируются в 1 случайную карту. По просьбе — можно выбрать
+    количество разом (x1/x5/x10/максимум/своё), а не жать по одной."""
     bot.answer_callback_query(call.id)
     fragments = (get_user_data(call.from_user.id) or {}).get('fragments') or 0
+    max_draws = fragments // FRAGMENTS_PER_DRAW
 
     txt = (f"💠 <b>Фрагменты</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
@@ -165,31 +168,71 @@ def frags_menu(call):
            f"Переработайте лишние копии карт (кнопка ♻️ на экране карты) — "
            f"каждые {FRAGMENTS_PER_DRAW} фрагментов можно обменять на случайную карту.")
 
-    markup = types.InlineKeyboardMarkup()
-    if fragments >= FRAGMENTS_PER_DRAW:
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    preset_btns = []
+    for n in (1, 5, 10):
+        cost = n * FRAGMENTS_PER_DRAW
+        callback = f"frags_draw:{n}" if fragments >= cost else "ignore"
+        preset_btns.append(types.InlineKeyboardButton(f"🎴 x{n} ({cost}💠)", callback_data=callback))
+    markup.add(*preset_btns)
+    if max_draws > 0:
         markup.add(types.InlineKeyboardButton(
-            f"🎴 Получить карту ({FRAGMENTS_PER_DRAW}💠)", callback_data="frags_draw"))
-    else:
-        markup.add(types.InlineKeyboardButton(
-            f"🎴 Получить карту ({FRAGMENTS_PER_DRAW}💠)", callback_data="ignore"))
+            f"🎴 Максимум (x{max_draws}, {max_draws * FRAGMENTS_PER_DRAW}💠)",
+            callback_data=f"frags_draw:{max_draws}"))
+    markup.add(types.InlineKeyboardButton("✏️ Своё количество", callback_data="frags_draw_custom"))
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_collection"))
 
     safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt,
                       reply_markup=markup, parse_mode="HTML")
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "frags_draw")
+def _frags_draw_result_text(rarity_counts, total):
+    lines = [f"✨ <b>Получено карт: {total}</b>"]
+    for r in RARITY_ORDER:
+        if r in rarity_counts:
+            cfg = RARITY_CONFIG.get(r, {})
+            lines.append(f"{cfg.get('emoji', '❓')} {cfg.get('ru', r)}: {rarity_counts[r]}")
+    return "\n".join(lines)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("frags_draw:"))
 def frags_draw(call):
-    success, result, is_dup, count = draw_card_with_fragments(call.from_user.id)
+    draws = int(call.data.split(":")[1])
+    success, result, total = draw_cards_with_fragments_bulk(call.from_user.id, draws)
     if not success:
         bot.answer_callback_query(call.id, result, show_alert=True)
         return
 
-    card = result
-    update_task_progress(call.from_user.id, "get_card", "daily")
-    emoji = RARITY_CONFIG.get(card['rarity'], {}).get('emoji', '')
-    bot.answer_callback_query(call.id, f"✨ Получена карта: {emoji} {card['name']}!", show_alert=True)
+    update_task_progress(call.from_user.id, "get_card", "daily", increment=total)
+    bot.answer_callback_query(call.id, _frags_draw_result_text(result, total).replace("<b>", "").replace("</b>", ""),
+                              show_alert=True)
     frags_menu(call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "frags_draw_custom")
+def frags_draw_custom_start(call):
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id,
+                           f"Введи, сколько карт получить за фрагменты ({FRAGMENTS_PER_DRAW}💠 за карту):")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _frags_draw_custom_step)
+
+
+def _frags_draw_custom_step(message):
+    try:
+        draws = int(message.text.strip())
+        if draws < 1:
+            raise ValueError
+    except (ValueError, AttributeError):
+        bot.send_message(message.chat.id, "❌ Введи целое число не меньше 1.")
+        return
+
+    success, result, total = draw_cards_with_fragments_bulk(message.from_user.id, draws)
+    if not success:
+        bot.send_message(message.chat.id, f"❌ {result}")
+        return
+
+    update_task_progress(message.from_user.id, "get_card", "daily", increment=total)
+    bot.send_message(message.chat.id, _frags_draw_result_text(result, total), parse_mode="HTML")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("inv_"))

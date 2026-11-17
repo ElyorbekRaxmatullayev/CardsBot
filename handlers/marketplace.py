@@ -31,16 +31,29 @@ def get_market_menu_markup():
     return markup
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "menu_market")
-def market_menu(call):
-    bot.answer_callback_query(call.id)
+def _build_market_menu_content():
     total = count_active_market_listings()
     txt = (f"🏪 <b>Мир культивации</b>\n"
            f"➖➖➖➖➖➖➖➖\n"
            f"Активных предложений: <b>{total}</b>\n\n"
            f"Фильтруй по редкости или смотри все:")
+    return txt, get_market_menu_markup()
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_market")
+def market_menu(call):
+    bot.answer_callback_query(call.id)
+    txt, markup = _build_market_menu_content()
     safe_edit_message(bot, call.message.chat.id, call.message.message_id,
-                      txt, reply_markup=get_market_menu_markup(), parse_mode="HTML")
+                      txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.message_handler(commands=['market'])
+def market_command(message):
+    """Команда /market — то же самое, что кнопка "🏪 Мир культивации" в
+    меню, но слает новое сообщение вместо редактирования старого."""
+    txt, markup = _build_market_menu_content()
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=message.from_user.id)
 
 
 # --- ПРОСМОТР ЛИСТИНГОВ ---

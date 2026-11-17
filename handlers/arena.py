@@ -178,9 +178,7 @@ def duel_mode_callback(call):
     show_duel_menu(call.message, call.from_user.id)
 
 
-def show_duel_menu(message, user_id):
-    # user_id передаётся явно: message тут — это сообщение БОТА (мы его редактируем),
-    # а message.chat.id в группе — это ID группы, а не игрока (в ЛС они случайно совпадают)
+def _build_duel_menu_content(user_id):
     user = get_user_data(user_id)
     squad = get_user_squad(user_id)
     rating = user.get('rating', 1000)
@@ -200,8 +198,37 @@ def show_duel_menu(message, user_id):
         markup.add(types.InlineKeyboardButton(f"⏳ Отдых ещё {_seconds_to_hm(seconds_left)}", callback_data="ignore"))
     markup.add(types.InlineKeyboardButton("🛡 Мой отряд (Карты)", callback_data="arena_my_squad"))
     markup.add(types.InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_game_menu"))
+    return txt, markup
 
+
+def show_duel_menu(message, user_id):
+    # user_id передаётся явно: message тут — это сообщение БОТА (мы его редактируем),
+    # а message.chat.id в группе — это ID группы, а не игрока (в ЛС они случайно совпадают)
+    txt, markup = _build_duel_menu_content(user_id)
     safe_edit_message(bot, message.chat.id, message.message_id, txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.message_handler(commands=['arena'])
+def arena_command(message):
+    """Команда /arena — то же самое, что кнопка "🏟 Битва бессмертных" в
+    меню, но слает новое сообщение, а не редактирует старое (команду можно
+    набрать когда угодно, без существующего меню на экране)."""
+    user_id = message.from_user.id
+    user = get_user_data(user_id)
+
+    if user and user.get('clan_id'):
+        clan = get_clan_info(user['clan_id'])
+        if clan:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⚔️ Дуэль", callback_data="arena_duel_mode"))
+            markup.add(types.InlineKeyboardButton("🏰 Клановая война", callback_data="arena_clan_war"))
+            markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_game_menu"))
+            safe_send_message(bot, message.chat.id, f"🏰 <b>Клан: {clan['name']}</b>\nВыберите тип сражения:",
+                              reply_markup=markup, parse_mode="HTML", owner_id=user_id)
+            return
+
+    txt, markup = _build_duel_menu_content(user_id)
+    safe_send_message(bot, message.chat.id, txt, reply_markup=markup, parse_mode="HTML", owner_id=user_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "arena_my_squad")
