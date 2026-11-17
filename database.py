@@ -1268,6 +1268,78 @@ def draw_cards_with_fragments_bulk(user_id, draws):
     return True, rarity_counts, draws
 
 
+# --- ПРОМОКОДЫ ---
+
+def create_promo_code(code, reward_coins, reward_gems, reward_fragments, reward_pack_type, reward_pack_count, created_by):
+    """Создаёт промокод (код нечувствителен к регистру — храним в UPPER).
+    Возвращает (success, message)."""
+    code = code.strip().upper()
+    if not code:
+        return False, "Пустой код"
+    try:
+        supabase.table("promo_codes").insert({
+            "code": code,
+            "reward_coins": reward_coins,
+            "reward_gems": reward_gems,
+            "reward_fragments": reward_fragments,
+            "reward_pack_type": reward_pack_type,
+            "reward_pack_count": reward_pack_count,
+            "created_by": created_by,
+        }).execute()
+        return True, "ok"
+    except Exception as e:
+        if "23505" in str(e) or "duplicate key" in str(e) or "UNIQUE" in str(e):
+            return False, "Такой промокод уже существует"
+        return False, f"Ошибка: {e}"
+
+
+def get_promo_code(code):
+    res = supabase.table("promo_codes").select("*").eq("code", code.strip().upper()).execute()
+    return res.data[0] if res.data else None
+
+
+def get_promo_codes_admin(limit=20):
+    """Последние созданные промокоды + сколько раз каждый активирован (для админки)."""
+    res = supabase.table("promo_codes").select("*").order("id", desc=True).limit(limit).execute()
+    codes = res.data or []
+    for c in codes:
+        uses = supabase.table("promo_code_redemptions").select("id", count="exact").eq("promo_code_id", c['id']).execute()
+        c['uses'] = uses.count or 0
+    return codes
+
+
+def redeem_promo_code(user_id, code):
+    """Активирует промокод для игрока — один игрок может активировать
+    конкретный код только один раз (UNIQUE(promo_code_id, user_id) ловит
+    гонку из двойного клика/одновременной отправки то же самое, что и
+    везде в этом файле). Возвращает (success, promo_dict_or_error_message)."""
+    promo = get_promo_code(code)
+    if not promo:
+        return False, "Промокод не найден"
+
+    try:
+        supabase.table("promo_code_redemptions").insert({
+            "promo_code_id": promo['id'], "user_id": user_id,
+        }).execute()
+    except Exception as e:
+        if "23505" in str(e) or "duplicate key" in str(e) or "UNIQUE" in str(e):
+            return False, "Вы уже активировали этот промокод"
+        return False, f"Ошибка: {e}"
+
+    if promo['reward_coins']:
+        update_coins(user_id, promo['reward_coins'])
+    if promo['reward_gems']:
+        update_gems(user_id, promo['reward_gems'])
+    if promo['reward_fragments']:
+        user = get_user_data(user_id)
+        new_fragments = (user.get('fragments') or 0) + promo['reward_fragments']
+        supabase.table("users").update({"fragments": new_fragments}).eq("telegram_id", user_id).execute()
+    if promo.get('reward_pack_type') and promo.get('reward_pack_count'):
+        add_pack_to_user(user_id, promo['reward_pack_type'], promo['reward_pack_count'])
+
+    return True, promo
+
+
 # --- КЛАН: ВЫХОД И ВСТУПЛЕНИЕ ---
 
 def leave_clan(user_id):

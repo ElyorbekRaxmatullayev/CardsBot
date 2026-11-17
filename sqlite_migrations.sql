@@ -241,6 +241,29 @@ CREATE TABLE IF NOT EXISTS clan_invites (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 20. PROMO_CODES (создаёт админ: код + награда монетами/гемами/
+-- фрагментами/паком; игрок активирует в ЛС боту)
+CREATE TABLE IF NOT EXISTS promo_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    reward_coins INTEGER DEFAULT 0,
+    reward_gems INTEGER DEFAULT 0,
+    reward_fragments INTEGER DEFAULT 0,
+    reward_pack_type TEXT,
+    reward_pack_count INTEGER DEFAULT 0,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 21. PROMO_CODE_REDEMPTIONS (один игрок — один промокод, не больше раза)
+CREATE TABLE IF NOT EXISTS promo_code_redemptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promo_code_id INTEGER NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(promo_code_id, user_id)
+);
+
 -- ИНДЕКСЫ
 CREATE INDEX IF NOT EXISTS idx_user_cards_user ON user_cards(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_packs_user ON user_packs(user_id);

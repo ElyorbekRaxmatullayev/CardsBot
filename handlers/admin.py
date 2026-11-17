@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from telebot import types
 
-from config import RARITY_ORDER, RARITY_CONFIG
+from config import RARITY_ORDER, RARITY_CONFIG, PACK_CONFIG
 from database import (add_new_card_to_db, get_user_data, update_coins, update_gems, get_all_users_count,
                       update_card, delete_card, get_cards_paginated, count_card_owners, add_card_to_user, add_cards_to_user,
                       create_event, end_event, get_events_admin, create_event_task,
@@ -13,7 +13,7 @@ from database import (add_new_card_to_db, get_user_data, update_coins, update_ge
                       get_required_channels, add_required_channel, delete_required_channel,
                       toggle_channel_mandatory, get_all_marriages, admin_divorce_marriage, get_all_user_ids,
                       set_card_stars_price, grant_premium, grant_bonus_to_all_users, reset_user_account,
-                      reset_all_player_cards)
+                      reset_all_player_cards, create_promo_code, get_promo_codes_admin)
 from loader import bot
 from utils import safe_edit_message, safe_delete_message, register_next_step_handler_for_user
 
@@ -91,6 +91,7 @@ def admin_start(message, user_id=None):
     )
     markup.row(
         types.InlineKeyboardButton("🎁 Бонусы пользователям", callback_data="adm_bonus_all"),
+        types.InlineKeyboardButton("🎟 Промокоды", callback_data="adm_promo_menu"),
     )
     row = [types.InlineKeyboardButton("📢 Каналы", callback_data="adm_channels")]
     if is_head_admin(user_id):
@@ -1518,4 +1519,158 @@ def _season_reset_confirm_step(message):
                      f"Удалено карт: {cards_deleted}\n"
                      f"Очищено слотов отряда: {squads_deleted}\n"
                      f"Сброшено уровней культивации: {players_leveled_reset}",
+                     reply_markup=_adm_back_markup(), parse_mode="HTML")
+
+
+# --- ПРОМОКОДЫ ---
+
+_pending_promo = {}  # admin_id -> data dict, между текстовыми шагами и финальным выбором пака кнопкой
+
+
+def _promo_reward_summary(data):
+    parts = []
+    if data.get('reward_coins'): parts.append(f"💰{data['reward_coins']}")
+    if data.get('reward_gems'): parts.append(f"💎{data['reward_gems']}")
+    if data.get('reward_fragments'): parts.append(f"💠{data['reward_fragments']}")
+    if data.get('reward_pack_type') and data.get('reward_pack_count'):
+        pack_name = PACK_CONFIG.get(data['reward_pack_type'], {}).get('name', data['reward_pack_type'])
+        parts.append(f"{pack_name} x{data['reward_pack_count']}")
+    return " + ".join(parts) if parts else "без награды"
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_promo_menu")
+def adm_promo_menu(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    codes = get_promo_codes_admin()
+    txt = "🎟 <b>Промокоды</b>\n➖➖➖➖➖➖➖➖\n\n"
+    if not codes:
+        txt += "Пока нет ни одного промокода."
+    else:
+        for c in codes:
+            txt += f"<code>{c['code']}</code> — {_promo_reward_summary(c)} (активировано: {c['uses']})\n"
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("➕ Создать промокод", callback_data="adm_promo_create"))
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="adm_back"))
+    safe_edit_message(bot, call.message.chat.id, call.message.message_id, txt, reply_markup=markup, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "adm_promo_create")
+def adm_promo_create_start(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id, "🎟 Введи <b>код</b> промокода (например: WINTER2026):", parse_mode="HTML")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _promo_step_code, {})
+
+
+def _promo_step_code(message, data):
+    code = message.text.strip()
+    if not code:
+        msg = bot.send_message(message.chat.id, "❌ Код не может быть пустым, введи ещё раз:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_code, data)
+        return
+    data['code'] = code
+    msg = bot.send_message(message.chat.id, "💰 Награда монетами (число, 0 — без монет):")
+    register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_coins, data)
+
+
+def _promo_step_coins(message, data):
+    try:
+        coins = int(message.text.strip())
+        if coins < 0:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое число ≥ 0:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_coins, data)
+        return
+    data['reward_coins'] = coins
+    msg = bot.send_message(message.chat.id, "💎 Награда гемами (число, 0 — без гемов):")
+    register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_gems, data)
+
+
+def _promo_step_gems(message, data):
+    try:
+        gems = int(message.text.strip())
+        if gems < 0:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое число ≥ 0:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_gems, data)
+        return
+    data['reward_gems'] = gems
+    msg = bot.send_message(message.chat.id, "💠 Награда фрагментами (число, 0 — без фрагментов):")
+    register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_fragments, data)
+
+
+def _promo_step_fragments(message, data):
+    try:
+        fragments = int(message.text.strip())
+        if fragments < 0:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое число ≥ 0:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_fragments, data)
+        return
+    data['reward_fragments'] = fragments
+
+    _pending_promo[message.from_user.id] = data
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for pack_key, cfg in PACK_CONFIG.items():
+        markup.add(types.InlineKeyboardButton(cfg['name'], callback_data=f"adm_promo_pack:{pack_key}"))
+    markup.add(types.InlineKeyboardButton("⏭ Без пака", callback_data="adm_promo_pack:none"))
+    bot.send_message(message.chat.id, "📦 Добавить пак к награде?", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_promo_pack:"))
+def adm_promo_pack_choice(call):
+    if not is_admin(call.from_user.id):
+        return
+    data = _pending_promo.get(call.from_user.id)
+    if not data:
+        bot.answer_callback_query(call.id, "Сессия истекла, начните заново через 🎟 Промокоды", show_alert=True)
+        return
+
+    pack_key = call.data.split(":")[1]
+    if pack_key == "none":
+        bot.answer_callback_query(call.id)
+        data['reward_pack_type'] = None
+        data['reward_pack_count'] = 0
+        _finalize_promo_code(call.message.chat.id, call.from_user.id, data)
+        return
+
+    bot.answer_callback_query(call.id)
+    data['reward_pack_type'] = pack_key
+    msg = bot.send_message(call.message.chat.id, f"Сколько штук «{PACK_CONFIG[pack_key]['name']}»?")
+    register_next_step_handler_for_user(bot, msg, call.from_user.id, _promo_step_pack_count, data)
+
+
+def _promo_step_pack_count(message, data):
+    try:
+        count = int(message.text.strip())
+        if count < 1:
+            raise ValueError
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ Введи целое число не меньше 1:")
+        register_next_step_handler_for_user(bot, msg, message.from_user.id, _promo_step_pack_count, data)
+        return
+    data['reward_pack_count'] = count
+    _finalize_promo_code(message.chat.id, message.from_user.id, data)
+
+
+def _finalize_promo_code(chat_id, admin_id, data):
+    _pending_promo.pop(admin_id, None)
+    success, result = create_promo_code(
+        data['code'], data['reward_coins'], data['reward_gems'], data['reward_fragments'],
+        data.get('reward_pack_type'), data.get('reward_pack_count', 0), admin_id,
+    )
+    if not success:
+        bot.send_message(chat_id, f"❌ {result}", reply_markup=_adm_back_markup())
+        return
+
+    bot.send_message(chat_id,
+                     f"✅ Промокод <code>{data['code'].upper()}</code> создан!\n"
+                     f"Награда: {_promo_reward_summary(data)}",
                      reply_markup=_adm_back_markup(), parse_mode="HTML")

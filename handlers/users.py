@@ -78,6 +78,9 @@ def get_game_inline_markup():
         types.InlineKeyboardButton("👑 Premium", callback_data="menu_premium"),
         types.InlineKeyboardButton("ℹ️ О нас", callback_data="menu_about"),
     )
+    markup.row(
+        types.InlineKeyboardButton("🎟 Промокод", callback_data="menu_promo"),
+    )
     return markup
 
 
@@ -354,6 +357,14 @@ def about_redirect(call):
     bot.answer_callback_query(call.id)
     safe_delete_message(bot, call.message.chat.id, call.message.message_id)
     about_handler(call.message, user_id=call.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_promo")
+def promo_redirect(call):
+    bot.answer_callback_query(call.id)
+    from handlers.promo import promo_start
+    safe_delete_message(bot, call.message.chat.id, call.message.message_id)
+    promo_start(call.message, user_id=call.from_user.id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_game_menu")
